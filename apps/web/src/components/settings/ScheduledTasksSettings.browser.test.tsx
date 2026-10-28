@@ -183,6 +183,7 @@ describe("ScheduledTasksSettings", () => {
   it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {
     setup();
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await expect.element(page.getByRole("dialog").getByText("Fix login bug")).toBeVisible();
     const name = page.getByRole("dialog").getByRole("textbox", { name: "Name" });
     await expect.element(name).toHaveValue("Review issues");
     await userEvent.fill(name, "Review stale issues");
@@ -195,13 +196,6 @@ describe("ScheduledTasksSettings", () => {
     state.connected = true;
     await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
     await expect.element(name).toHaveValue("Review stale issues");
-  });
-
-  it("names a bound thread the shell has not loaded", async () => {
-    state.connected = true;
-    state.tasksLoaded = true;
-    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
-    await expect.element(page.getByRole("dialog").getByText("Fix login bug")).toBeVisible();
   });
 
   it("keeps an editor the user opened when the linked task loads later", async () => {
