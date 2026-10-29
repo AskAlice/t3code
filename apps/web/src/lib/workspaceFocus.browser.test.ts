@@ -32,11 +32,19 @@ function setup() {
   };
 }
 
+/** Mirrors MessagesTimeline's scroller, which takes focus so the keyboard scrolls it. */
+function conversationScroller(height: number) {
+  const timeline = document.createElement("div");
+  timeline.style.cssText = `height: ${height}px; overflow-y: auto`;
+  timeline.tabIndex = -1;
+  timeline.dataset.workspaceFocusDefault = "";
+  return timeline;
+}
+
 function conversationWithTimeline(fixture: ReturnType<typeof setup>) {
   const conversation = fixture.area("conversation", 1);
   conversation.button.remove();
-  const timeline = document.createElement("div");
-  timeline.style.cssText = "height: 200px; overflow-y: auto";
+  const timeline = conversationScroller(200);
   timeline.append(Object.assign(document.createElement("div"), { style: "height: 2000px" }));
   conversation.element.append(timeline);
   const composer = fixture.area("composer", 2);
@@ -52,7 +60,7 @@ describe("workspace area focus", () => {
     const composer = fixture.area("composer", 2);
     sidebar.button.focus();
     fixture.controller.move(1);
-    // The conversation is a region; it takes focus itself rather than its first button.
+    // Without a timeline (an empty thread), the region takes focus rather than its first button.
     expect(document.activeElement).toBe(conversation.element);
     fixture.controller.move(1);
     expect(document.activeElement).toBe(composer.button);
@@ -201,8 +209,7 @@ describe("workspace area focus", () => {
   it("does not scroll the conversation to an old control", () => {
     using fixture = setup();
     const conversation = fixture.area("conversation", 1);
-    const timeline = document.createElement("div");
-    timeline.style.cssText = "height: 50px; overflow-y: auto";
+    const timeline = conversationScroller(50);
     const copy = document.createElement("button");
     copy.textContent = "Copy";
     timeline.append(copy, Object.assign(document.createElement("div"), { style: "height: 400px" }));
@@ -214,7 +221,7 @@ describe("workspace area focus", () => {
     // Live follow moved the timeline to the newest output.
     timeline.scrollTop = 300;
     fixture.controller.move(-1);
-    expect(document.activeElement).toBe(conversation.element);
+    expect(document.activeElement).toBe(timeline);
     expect(timeline.scrollTop).toBe(300);
   });
 
