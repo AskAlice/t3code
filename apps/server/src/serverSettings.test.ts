@@ -2190,6 +2190,45 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
     }).pipe(Effect.provide(layerServerSettings(policy))),
   );
 
+  it.effect("keeps a locked Codex pin from being bypassed by managed setup", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const codexId = ProviderInstanceId.make("codex_chatgpt");
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          providerInstances: { [codexId]: { driver: codex, config: { setupMode: "managed" } } },
+        }),
+      );
+
+      const effective = (yield* service.getSettings).providerInstances[codexId];
+      assert.deepEqual(effective?.config, { binaryPath: "/opt/gateway/codex" });
+      // A stored value stays for when the policy is gone; a new one is refused.
+      const refused = yield* service
+        .updateProviderInstance({
+          operation: "upsert",
+          instanceId: ProviderInstanceId.make("codex_new"),
+          instance: { driver: codex, config: { setupMode: "managed" } },
+        })
+        .pipe(Effect.flip);
+      assert.equal(refused.managedSetting, "providerInstances.codex_new.config.setupMode");
+    }).pipe(
+      Effect.provide(
+        layerServerSettings({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: {
+            providers: {
+              instances: { [codex]: { locked: true, binaryPath: "/opt/gateway/codex" } },
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
   it.effect("pins instance fields at read time and refuses edits to locked ones", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

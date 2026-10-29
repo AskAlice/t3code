@@ -123,7 +123,9 @@ stay, marked unavailable.
 variable that routes Claude through Amazon Bedrock or a base URL for a company gateway.
 `binaryPath` and `launchArgs` apply to providers that have those settings. With `"locked": true`
 users cannot change the fields you set; with `"locked": false` they fill only fields the user left
-empty. The policy file is readable by every user on the machine, so do not put credentials in
+empty. A Codex pin that is locked, or set under `maxRuntimeMode`, also rules out
+[Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), whose runtime would skip it. The
+policy file is readable by every user on the machine, so do not put credentials in
 it.
 
 ### Updates

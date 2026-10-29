@@ -51,6 +51,14 @@ const PACKAGED_CLIENTS: ReadonlyArray<ProviderClientDefinition> = [
   acpRegistryClient,
 ];
 
+/**
+ * Fields that make an instance launch without the settings a pin sets: managed Codex runs T3's own
+ * runtime against OpenAI. A policy that owns a pin owns these too, leaving them at their defaults.
+ */
+const PIN_BYPASS_FIELDS: ReadonlyMap<ProviderDriverKind, ReadonlyArray<string>> = new Map([
+  [ProviderDriverKind.make("codex"), ["setupMode"]],
+]);
+
 /** Drivers this build knows, by the names users see; a policy naming any other is refused. */
 const KNOWN_DRIVERS: ReadonlyMap<ProviderDriverKind, KnownDriver> = new Map([
   known("codex", "Codex", CodexSettings),
@@ -273,17 +281,21 @@ export function makeManagedProviders(
   const rules = new Map<ProviderDriverKind, DriverRule>();
   for (const [driver, known] of KNOWN_DRIVERS) {
     const pin = pins.get(driver);
+    const bypasses = pin === undefined ? [] : (PIN_BYPASS_FIELDS.get(driver) ?? []);
     if (maxRuntimeMode !== undefined) {
       rules.set(driver, {
         pin,
-        config: LAUNCH_CONFIG_FIELDS.filter((field) => known.configFields.has(field)),
+        config: [
+          ...LAUNCH_CONFIG_FIELDS.filter((field) => known.configFields.has(field)),
+          ...bypasses,
+        ],
         fill: [],
         environment: "all",
       });
     } else if (pin !== undefined) {
       rules.set(driver, {
         pin,
-        config: pin.locked ? pinnedFields(pin) : [],
+        config: pin.locked ? [...pinnedFields(pin), ...bypasses] : [],
         fill: pin.locked ? [] : pinnedFields(pin),
         environment: pin.locked ? "locked" : "fill",
       });
