@@ -1434,6 +1434,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "write-secret",
   "write-file",
   "prepare-directory",
+  "write-managed-setting",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -1444,10 +1445,16 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
+    /** For `write-managed-setting`: the locked dot path and who manages it. */
+    managedSetting: Schema.optional(Schema.String),
+    managedBy: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    if (this.operation === "write-managed-setting") {
+      return `${this.managedSetting ?? "This setting"} is managed by ${this.managedBy ?? "your organization"} and cannot be changed.`;
+    }
     const provider =
       this.providerInstanceId === undefined ? "" : ` for provider ${this.providerInstanceId}`;
     const variable =

@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type ManagedPolicyDocument,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -29,14 +30,16 @@ import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
-const layerServerSettings = () =>
+const layerServerSettings = (policy?: ManagedPolicyDocument) =>
   ServerSettingsModule.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest(policy)),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
       Layer.fresh(
@@ -50,6 +53,7 @@ const layerServerSettings = () =>
 const layerServerSettingsWithSecrets = () =>
   ServerSettingsModule.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
       Layer.fresh(
@@ -1017,6 +1021,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       })),
     ).pipe(Layer.provide(ServerSecretStore.layer));
     const layerSettings = ServerSettingsModule.layer.pipe(
+      Layer.provide(ManagedPolicy.layerTest()),
       Layer.provide(layerSecret),
       Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
       Layer.provideMerge(
@@ -1119,7 +1124,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         return yield* fresh.getSettings;
       }).pipe(
         Effect.provide(
-          Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ServerSecretStore.layer)),
+          Layer.fresh(ServerSettingsModule.layer).pipe(
+            Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+          ),
         ),
       );
       assert.equal(reloaded.providerInstances[instanceId]?.environment?.[0]?.value, expected);
@@ -1414,6 +1421,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
     });
     const layerSettings = ServerSettingsModule.layer.pipe(
+      Layer.provide(ManagedPolicy.layerTest()),
       Layer.provide(layerFailingSecretStore(cause)),
       Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
       Layer.provideMerge(
@@ -1668,6 +1676,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         }),
       );
       const layerSettings = ServerSettingsModule.layer.pipe(
+        Layer.provide(ManagedPolicy.layerTest()),
+        Layer.provide(ManagedPolicy.layerTest()),
         Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
         Layer.provide(layerSecretStore),
         Layer.provideMerge(
@@ -1827,5 +1837,85 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+});
+
+it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
+  const policy: ManagedPolicyDocument = {
+    schemaVersion: 1,
+    organization: "Example Corp",
+    settings: {
+      defaultRuntimeMode: { value: "approval-required", locked: false },
+      enableAgentDeviceAccess: { value: false, locked: true },
+    },
+  };
+
+  it.effect("uses policy defaults until the user picks something else", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+
+      assert.equal((yield* service.getSettings).defaultRuntimeMode, "approval-required");
+
+      // The built-in default differs from the policy's, so choosing it must persist.
+      yield* service.updateSettings({ defaultRuntimeMode: "full-access" });
+      assert.equal((yield* service.getSettings).defaultRuntimeMode, "full-access");
+      assert.include(yield* fs.readFileString(config.settingsPath), '"full-access"');
+
+      // Choosing the policy's value leaves nothing in the file to outlive the policy.
+      yield* service.updateSettings({ defaultRuntimeMode: "approval-required" });
+      assert.notInclude(yield* fs.readFileString(config.settingsPath), "defaultRuntimeMode");
+    }).pipe(Effect.provide(layerServerSettings(policy))),
+  );
+
+  it.effect("lays locks over the user's own and per-project values without persisting them", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const projectId = ProjectId.make("project-locked");
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          enableAgentDeviceAccess: true,
+          projectSettingsOverrides: { [projectId]: { enableAgentDeviceAccess: true } },
+        }),
+      );
+
+      const settings = yield* service.getSettings;
+      assert.isFalse(settings.enableAgentDeviceAccess);
+      assert.isFalse(settings.projectSettingsOverrides[projectId]?.enableAgentDeviceAccess);
+      assert.deepEqual(service.managedPolicy, {
+        organization: "Example Corp",
+        lockedSettings: ["enableAgentDeviceAccess"],
+      });
+
+      const rejected = yield* service
+        .updateSettings({ enableAgentDeviceAccess: true, defaultAutoPull: true })
+        .pipe(Effect.flip);
+      assert.equal(rejected.operation, "write-managed-setting");
+      assert.equal(rejected.managedSetting, "enableAgentDeviceAccess");
+      assert.equal(
+        rejected.message,
+        "enableAgentDeviceAccess is managed by Example Corp and cannot be changed.",
+      );
+      assert.isFalse((yield* service.getSettings).defaultAutoPull);
+
+      const projectRejected = yield* service
+        .updateSettings({
+          projectSettingsOverrides: { [projectId]: { enableAgentDeviceAccess: true } },
+        })
+        .pipe(Effect.flip);
+      assert.equal(projectRejected.managedSetting, "enableAgentDeviceAccess");
+
+      // Unrelated writes, and writes that keep the locked value, go through.
+      yield* service.updateSettings({ enableAgentDeviceAccess: false, defaultAutoPull: true });
+      assert.isTrue((yield* service.getSettings).defaultAutoPull);
+
+      // The user's own value stays on disk, ready for when the policy is removed.
+      const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.isTrue(stored.enableAgentDeviceAccess);
+    }).pipe(Effect.provide(layerServerSettings(policy))),
   );
 });
