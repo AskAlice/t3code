@@ -289,6 +289,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
             </Text>
           ) : (
             <>
+              <ManagedPolicyNotice targets={targets} />
               {projectSelected ? (
                 <SettingsProjectOverridesSection
                   projectLabel={selectedProject?.label ?? "Unavailable project"}
@@ -534,6 +535,26 @@ function MixedValuesLabel(props: { readonly projectSelected: boolean }) {
       className="px-2 text-sm text-foreground-muted android:px-4"
     >
       Mixed
+    </Text>
+  );
+}
+
+/** Locked settings are refused when saved; say so before the user tries. */
+function ManagedPolicyNotice(props: { readonly targets: readonly ScopedMobileSettingsTarget[] }) {
+  const organizations = [
+    ...new Set(
+      props.targets.flatMap((target) => {
+        const policy = target.environment.serverConfig.managedPolicy;
+        return policy !== undefined && policy.lockedSettings.length > 0
+          ? [policy.organization]
+          : [];
+      }),
+    ),
+  ];
+  if (organizations.length === 0) return null;
+  return (
+    <Text className="px-2 text-sm text-foreground-muted android:px-4">
+      Some settings are managed by {organizations.join(", ")} and cannot be changed here.
     </Text>
   );
 }
