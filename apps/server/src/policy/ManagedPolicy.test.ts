@@ -77,4 +77,40 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.include(reasons[3], "storageCleanup.logsAfterDayz");
     }),
   );
+
+  it.effect("tells clients the runtime mode ceiling", () =>
+    Effect.gen(function* () {
+      const policy = yield* loadFrom(
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: { defaultRuntimeMode: { value: "approval-required", locked: true } },
+          limits: { maxRuntimeMode: "auto-accept-edits" },
+        }),
+      );
+      assert.deepEqual(policy.summary?.limits, { maxRuntimeMode: "auto-accept-edits" });
+    }),
+  );
+
+  it.effect("refuses a default runtime mode above its own ceiling", () =>
+    Effect.gen(function* () {
+      const reasons = yield* Effect.forEach([false, true], (locked) =>
+        loadFrom(
+          JSON.stringify({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            settings: { defaultRuntimeMode: { value: "auto", locked } },
+            limits: { maxRuntimeMode: "auto-accept-edits" },
+          }),
+        ).pipe(
+          Effect.flip,
+          Effect.map((error) => error.reason),
+        ),
+      );
+      assert.deepEqual(reasons, [
+        '"defaultRuntimeMode" is above "limits.maxRuntimeMode"',
+        '"defaultRuntimeMode" is above "limits.maxRuntimeMode"',
+      ]);
+    }),
+  );
 });

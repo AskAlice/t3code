@@ -46,7 +46,8 @@ export const fromDocument = Effect.fn("ManagedPolicy.fromDocument")(function* (
       summary: undefined,
     });
   }
-  const settings = ManagedSettings.makeManagedSettings(document.settings ?? {});
+  const maxRuntimeMode = document.limits?.maxRuntimeMode;
+  const settings = ManagedSettings.makeManagedSettings(document.settings ?? {}, maxRuntimeMode);
   if (settings._tag === "Invalid") {
     return yield* new ManagedPolicyFileError({ path, reason: settings.reason });
   }
@@ -58,6 +59,7 @@ export const fromDocument = Effect.fn("ManagedPolicy.fromDocument")(function* (
       organization: document.organization,
       ...(document.supportUrl === undefined ? {} : { supportUrl: document.supportUrl }),
       lockedSettings: settings.settings.lockedPaths,
+      ...(maxRuntimeMode === undefined ? {} : { limits: { maxRuntimeMode } }),
     },
   });
 });

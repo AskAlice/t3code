@@ -1918,4 +1918,47 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
       assert.isTrue(stored.enableAgentDeviceAccess);
     }).pipe(Effect.provide(layerServerSettings(policy))),
   );
+  it.effect("lowers default runtime modes above the ceiling without rewriting them", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const raised = ProjectId.make("project-raised");
+      const supervised = ProjectId.make("project-supervised");
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          defaultRuntimeMode: "auto",
+          projectSettingsOverrides: {
+            [raised]: { defaultRuntimeMode: "full-access" },
+            [supervised]: { defaultRuntimeMode: "approval-required" },
+          },
+        }),
+      );
+
+      const settings = yield* service.getSettings;
+      assert.equal(settings.defaultRuntimeMode, "auto-accept-edits");
+      assert.equal(
+        settings.projectSettingsOverrides[raised]?.defaultRuntimeMode,
+        "auto-accept-edits",
+      );
+      assert.equal(
+        settings.projectSettingsOverrides[supervised]?.defaultRuntimeMode,
+        "approval-required",
+      );
+
+      yield* service.updateSettings({ defaultAutoPull: true });
+      const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.equal(stored.defaultRuntimeMode, "auto");
+      assert.equal(stored.projectSettingsOverrides[raised].defaultRuntimeMode, "full-access");
+    }).pipe(
+      Effect.provide(
+        layerServerSettings({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { maxRuntimeMode: "auto-accept-edits" },
+        }),
+      ),
+    ),
+  );
 });

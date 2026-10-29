@@ -1,7 +1,9 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  isRuntimeModeAbove,
   type ManagedPolicySetting,
   ProjectSettingsOverrides,
+  type RuntimeMode,
   ServerSettings,
 } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
@@ -84,7 +86,10 @@ export interface ManagedSettings {
   readonly withDefaults: (persisted: unknown) => unknown;
   /** Built-in defaults with the policy's defaults applied; the settings file omits values equal to these. */
   readonly defaults: ServerSettings;
-  /** Lay locked values over settings, including inside each project's overrides. */
+  /**
+   * Lay locked values over settings, including inside each project's overrides, and lower
+   * default runtime modes above the policy's ceiling to it.
+   */
   readonly applyLocks: (settings: ServerSettings) => ServerSettings;
   /**
    * Vet a write from `current` to `next`. It is refused when it tries to move a locked path off
@@ -135,9 +140,45 @@ const lockTargets = (encoded: unknown, entry: Entry): ReadonlyArray<Segments> =>
   return [entry.segments, ...projectTargets];
 };
 
+/**
+ * A user's stored default runtime mode can sit above a ceiling deployed after it was chosen, and
+ * the built-in default is the broadest mode. Every new thread would then be refused, so the
+ * effective default is the ceiling instead. The stored value is untouched and returns with the
+ * policy's removal; existing threads keep their modes and are refused turns instead.
+ */
+const clampDefaultRuntimeModes = (
+  settings: ServerSettings,
+  ceiling: RuntimeMode,
+): ServerSettings => {
+  const projectsAbove = Object.entries(settings.projectSettingsOverrides).filter(
+    ([, overrides]) =>
+      overrides.defaultRuntimeMode !== undefined &&
+      isRuntimeModeAbove(overrides.defaultRuntimeMode, ceiling),
+  );
+  if (!isRuntimeModeAbove(settings.defaultRuntimeMode, ceiling) && projectsAbove.length === 0) {
+    return settings;
+  }
+  return {
+    ...settings,
+    defaultRuntimeMode: isRuntimeModeAbove(settings.defaultRuntimeMode, ceiling)
+      ? ceiling
+      : settings.defaultRuntimeMode,
+    projectSettingsOverrides: {
+      ...settings.projectSettingsOverrides,
+      ...Object.fromEntries(
+        projectsAbove.map(([projectId, overrides]) => [
+          projectId,
+          { ...overrides, defaultRuntimeMode: ceiling },
+        ]),
+      ),
+    },
+  };
+};
+
 /** Build the overlay for a policy's settings, or describe the first entry this build cannot apply. */
 export function makeManagedSettings(
   settings: Readonly<Record<string, ManagedPolicySetting>>,
+  maxRuntimeMode?: RuntimeMode,
 ):
   | { readonly _tag: "Valid"; readonly settings: ManagedSettings }
   | { readonly _tag: "Invalid"; readonly reason: string } {
@@ -175,6 +216,16 @@ export function makeManagedSettings(
       reason: `"${lost.path}" is not a setting this version can manage, or its value is invalid`,
     };
   }
+  // A managed default above the ceiling would start every thread in a mode the policy refuses.
+  if (
+    all.some((entry) => entry.path === "defaultRuntimeMode") &&
+    isRuntimeModeAbove(decoded.value.defaultRuntimeMode, maxRuntimeMode)
+  ) {
+    return {
+      _tag: "Invalid",
+      reason: `"defaultRuntimeMode" is above "limits.maxRuntimeMode"`,
+    };
+  }
 
   const defaultsTree = defaults.reduce<unknown>(
     (tree, entry) => setPath(tree, entry.segments, entry.value),
@@ -188,20 +239,25 @@ export function makeManagedSettings(
   const lockCache = new WeakMap<ServerSettings, ServerSettings>();
 
   const applyLocks = (current: ServerSettings): ServerSettings => {
-    if (locks.length === 0) return current;
+    if (locks.length === 0 && maxRuntimeMode === undefined) return current;
     const cached = lockCache.get(current);
     if (cached !== undefined) return cached;
-    const encoded = encodeSettings(current);
-    const locked = locks.reduce<unknown>(
-      (tree, entry) =>
-        lockTargets(tree, entry).reduce<unknown>(
-          (next, target) => setPath(next, target, entry.value),
-          tree,
-        ),
-      encoded,
-    );
-    // Validated against the built-in defaults above, so a failure here is a bug, not bad input.
-    const result = decodeSettings(locked);
+    const locked =
+      locks.length === 0
+        ? current
+        : // Validated against the built-in defaults above, so a failure here is a bug, not bad input.
+          decodeSettings(
+            locks.reduce<unknown>(
+              (tree, entry) =>
+                lockTargets(tree, entry).reduce<unknown>(
+                  (next, target) => setPath(next, target, entry.value),
+                  tree,
+                ),
+              encodeSettings(current),
+            ),
+          );
+    const result =
+      maxRuntimeMode === undefined ? locked : clampDefaultRuntimeModes(locked, maxRuntimeMode);
     lockCache.set(current, result);
     return result;
   };
