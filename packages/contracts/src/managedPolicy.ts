@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderDriverKind, ProviderInstanceEnvironmentVariableName } from "./providerInstance.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 
 /**
@@ -33,6 +34,7 @@ export const ManagedPolicyLimits = Schema.Struct({
   /** Can only turn product analytics off, never force it on. */
   telemetry: Schema.optionalKey(Schema.Boolean),
   browserCookieImport: Schema.optionalKey(Schema.Boolean),
+  providers: Schema.optionalKey(ManagedProviderLimits),
 });
 export type ManagedPolicyLimits = typeof ManagedPolicyLimits.Type;
 
@@ -45,8 +47,45 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
   webhookTasks: Schema.optionalKey(Schema.Boolean),
   telemetry: Schema.optionalKey(Schema.Boolean),
   browserCookieImport: Schema.optionalKey(Schema.Boolean),
+  providers: Schema.optionalKey(
+    Schema.Struct({
+      /** Absent means every driver is allowed. */
+      allowedDrivers: Schema.optionalKey(Schema.Array(ProviderDriverKind)),
+      /**
+       * Per driver, the instance fields users cannot change, as dot paths into the instance
+       * envelope: `config.binaryPath`, `config.launchArgs`, `environment.<NAME>`.
+       */
+      lockedInstanceFields: Schema.optionalKey(
+        Schema.Record(ProviderDriverKind, Schema.Array(Schema.String)),
+      ),
+    }),
+  ),
 });
 export type ManagedPolicySummaryLimits = typeof ManagedPolicySummaryLimits.Type;
+
+/**
+ * Fields an administrator pins on every instance of one driver, merged over the user's instance
+ * when settings are read. `binaryPath` and `launchArgs` land in the driver's `config`, so a driver
+ * without that config field rejects the policy. `locked: false` fills only what the user left empty.
+ */
+export const ManagedProviderInstance = Schema.Struct({
+  locked: Schema.Boolean,
+  environment: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ name: ProviderInstanceEnvironmentVariableName, value: Schema.String }),
+    ),
+  ),
+  binaryPath: Schema.optionalKey(TrimmedNonEmptyString),
+  launchArgs: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ManagedProviderInstance = typeof ManagedProviderInstance.Type;
+
+export const ManagedProviderLimits = Schema.Struct({
+  /** Only these drivers run; instances of any other driver show as unavailable. */
+  allowedDrivers: Schema.optionalKey(Schema.Array(ProviderDriverKind)),
+  instances: Schema.optionalKey(Schema.Record(ProviderDriverKind, ManagedProviderInstance)),
+});
+export type ManagedProviderLimits = typeof ManagedProviderLimits.Type;
 
 /**
  * The machine-wide policy file an administrator deploys. Decoded with excess properties

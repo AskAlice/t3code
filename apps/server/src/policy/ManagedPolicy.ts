@@ -20,6 +20,7 @@ import {
 
 import { telemetryChannel } from "../config.ts";
 import * as ManagedLimits from "./managedLimits.ts";
+import * as ManagedProviders from "./managedProviders.ts";
 import * as ManagedSettings from "./managedSettings.ts";
 
 export class ManagedPolicy extends Context.Service<
@@ -29,6 +30,7 @@ export class ManagedPolicy extends Context.Service<
     readonly path: string;
     readonly document: ManagedPolicyDocument | undefined;
     readonly settings: ManagedSettings.ManagedSettings;
+    readonly providers: ManagedProviders.ManagedProviders;
     /** What clients are told; absent when no policy applies. */
     readonly summary: ManagedPolicySummary | undefined;
   }
@@ -57,6 +59,7 @@ export const fromDocument = Effect.fn("ManagedPolicy.fromDocument")(function* (
       path,
       document: undefined,
       settings: ManagedSettings.unmanagedSettings,
+      providers: ManagedProviders.unmanagedProviders,
       summary: undefined,
     });
   }
@@ -65,22 +68,37 @@ export const fromDocument = Effect.fn("ManagedPolicy.fromDocument")(function* (
   if (settings._tag === "Invalid") {
     return yield* new ManagedPolicyFileError({ path, reason: settings.reason });
   }
+  const providerLimits = document.limits?.providers;
+  const providers =
+    providerLimits === undefined
+      ? undefined
+      : ManagedProviders.makeManagedProviders(providerLimits);
+  if (providers?._tag === "Invalid") {
+    return yield* new ManagedPolicyFileError({ path, reason: providers.reason });
+  }
+  const lockedInstanceFields = providers?.providers.lockedInstanceFields ?? {};
   return ManagedPolicy.of({
     path,
     document,
     settings: settings.settings,
+    providers: providers?.providers ?? ManagedProviders.unmanagedProviders,
     summary: {
       organization: document.organization,
       ...(document.supportUrl === undefined ? {} : { supportUrl: document.supportUrl }),
       lockedSettings: settings.settings.lockedPaths,
-      ...(document.limits === undefined ? {} : { limits: summarizeLimits(document) }),
+      ...(document.limits === undefined
+        ? {}
+        : { limits: summarizeLimits(document, lockedInstanceFields) }),
     },
   });
 });
 
 // Copies only what clients may see; other limits can carry values that stay on the server.
-function summarizeLimits(document: ManagedPolicyDocument): LimitsSummary {
-  const { maxRuntimeMode, clients, webhookTasks, telemetry, browserCookieImport } =
+function summarizeLimits(
+  document: ManagedPolicyDocument,
+  lockedInstanceFields: Readonly<Record<string, ReadonlyArray<string>>>,
+): LimitsSummary {
+  const { maxRuntimeMode, clients, webhookTasks, telemetry, browserCookieImport, providers } =
     document.limits ?? {};
   const connect = ManagedLimits.allowsConnect({ document });
   return {
@@ -90,6 +108,16 @@ function summarizeLimits(document: ManagedPolicyDocument): LimitsSummary {
     ...(webhookTasks === undefined ? {} : { webhookTasks }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(browserCookieImport === undefined ? {} : { browserCookieImport }),
+    ...(providers === undefined
+      ? {}
+      : {
+          providers: {
+            ...(providers.allowedDrivers === undefined
+              ? {}
+              : { allowedDrivers: providers.allowedDrivers }),
+            ...(Object.keys(lockedInstanceFields).length === 0 ? {} : { lockedInstanceFields }),
+          },
+        }),
   };
 }
 

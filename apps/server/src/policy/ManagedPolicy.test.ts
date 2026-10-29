@@ -4,7 +4,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { ProviderDriverKind } from "@t3tools/contracts";
+
 import * as ManagedPolicy from "./ManagedPolicy.ts";
+import { disallowedDriverReason } from "./managedProviders.ts";
 
 it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
   const loadFrom = (contents: string | undefined) =>
@@ -127,6 +130,75 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
         '"defaultRuntimeMode" is above "limits.maxRuntimeMode"',
         '"defaultRuntimeMode" is above "limits.maxRuntimeMode"',
       ]);
+    }),
+  );
+
+  it.effect("tells clients which drivers run and which instance fields are locked", () =>
+    Effect.gen(function* () {
+      const policy = yield* loadFrom(
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: {
+            providers: {
+              allowedDrivers: ["claudeAgent", "codex"],
+              instances: {
+                claudeAgent: {
+                  locked: true,
+                  environment: [{ name: "CLAUDE_CODE_USE_BEDROCK", value: "1" }],
+                  binaryPath: "/opt/claude/bin/claude",
+                },
+                codex: { locked: false, launchArgs: "-c model_provider=gateway" },
+              },
+            },
+          },
+        }),
+      );
+      assert.deepEqual<unknown>(policy.summary?.limits, {
+        providers: {
+          allowedDrivers: ["claudeAgent", "codex"],
+          lockedInstanceFields: {
+            claudeAgent: ["config.binaryPath", "environment.CLAUDE_CODE_USE_BEDROCK"],
+          },
+        },
+      });
+      assert.equal(
+        disallowedDriverReason(policy.summary, ProviderDriverKind.make("cursor")),
+        "Example Corp's policy does not allow the Cursor provider.",
+      );
+      assert.isUndefined(disallowedDriverReason(policy.summary, ProviderDriverKind.make("codex")));
+    }),
+  );
+
+  it.effect("refuses provider limits it cannot enforce", () =>
+    Effect.gen(function* () {
+      const withProviders = (providers: unknown) =>
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { providers },
+        });
+      const reasons = yield* Effect.forEach(
+        [
+          withProviders({ allowedDrivers: ["claudeAgent", "notAProvider"] }),
+          withProviders({ instances: { notAProvider: { locked: true, binaryPath: "/x" } } }),
+          // Cursor has no launch arguments setting to pin.
+          withProviders({ instances: { cursor: { locked: true, launchArgs: "--x" } } }),
+          withProviders({ instances: { codex: { locked: true, homePath: "/x" } } }),
+          withProviders({
+            instances: { codex: { locked: true, environment: [{ name: "1BAD", value: "" }] } },
+          }),
+        ],
+        (contents) =>
+          loadFrom(contents).pipe(
+            Effect.flip,
+            Effect.map((error) => error.reason),
+          ),
+      );
+      assert.lengthOf(reasons, 5);
+      assert.include(reasons[0], "notAProvider");
+      assert.include(reasons[1], "notAProvider");
+      assert.include(reasons[2], "launchArgs");
     }),
   );
 });

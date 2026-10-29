@@ -1962,3 +1962,152 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
     ),
   );
 });
+
+it.layer(NodeServices.layer)("server settings under a provider policy", (it) => {
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const codex = ProviderDriverKind.make("codex");
+  const cursor = ProviderDriverKind.make("cursor");
+  const bedrock = { name: "CLAUDE_CODE_USE_BEDROCK", value: "1", sensitive: false };
+  const policy: ManagedPolicyDocument = {
+    schemaVersion: 1,
+    organization: "Example Corp",
+    limits: {
+      providers: {
+        allowedDrivers: [claude, codex],
+        instances: {
+          [claude]: {
+            locked: true,
+            environment: [{ name: bedrock.name, value: bedrock.value }],
+            binaryPath: "/opt/claude/bin/claude",
+          },
+          [codex]: { locked: false, launchArgs: "-c model_provider=gateway" },
+        },
+      },
+    },
+  };
+
+  it.effect("refuses enabling a driver the policy leaves out, and keeps existing ones", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const cursorId = ProviderInstanceId.make("cursor_work");
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          providerInstances: { [cursorId]: { driver: cursor, enabled: true } },
+          textGenerationModelSelection: { instanceId: cursorId, model: "auto" },
+        }),
+      );
+
+      const settings = yield* service.getSettings;
+      // Never deleted: the instance stays for its threads, and the registry shows it unavailable.
+      assert.equal(settings.providerInstances[cursorId]?.driver, cursor);
+      // Built-in text generation does not fall back onto a disallowed driver either.
+      assert.equal(settings.textGenerationModelSelection.instanceId, "codex");
+
+      const rejected = yield* service
+        .updateProviderInstance({
+          operation: "create",
+          instanceId: ProviderInstanceId.make("cursor_new"),
+          instance: { driver: cursor, enabled: true },
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejected.operation, "use-disallowed-provider");
+      assert.equal(rejected.message, "Example Corp's policy does not allow the Cursor provider.");
+
+      // Turning it off, or removing it, is still the user's call.
+      yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId: cursorId,
+        instance: { driver: cursor, enabled: false },
+      });
+      yield* service.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+      assert.isUndefined((yield* service.getSettings).providerInstances[cursorId]);
+    }).pipe(Effect.provide(layerServerSettings(policy))),
+  );
+
+  it.effect("pins instance fields at read time and refuses edits to locked ones", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const claudeId = ProviderInstanceId.make("claudeAgent");
+      const codexId = ProviderInstanceId.make("codex");
+      const userVariable = { name: "MY_FLAG", value: "on", sensitive: false };
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          providerInstances: {
+            [claudeId]: {
+              driver: claude,
+              environment: [{ ...bedrock, value: "0" }, userVariable],
+              config: { binaryPath: "/usr/local/bin/claude" },
+            },
+          },
+        }),
+      );
+
+      const effective = yield* service.getSettings;
+      const claudeInstance = effective.providerInstances[claudeId];
+      assert.deepEqual(claudeInstance?.environment, [bedrock, userVariable]);
+      assert.deepEqual(claudeInstance?.config, { binaryPath: "/opt/claude/bin/claude" });
+      // The implicit default Codex instance gets the unlocked default too.
+      assert.deepEqual(effective.providerInstances[codexId]?.config, {
+        launchArgs: "-c model_provider=gateway",
+      });
+
+      const lockedBinary = yield* service
+        .updateProviderInstance({
+          operation: "upsert",
+          instanceId: claudeId,
+          instance: { ...claudeInstance!, config: { binaryPath: "/tmp/claude" } },
+        })
+        .pipe(Effect.flip);
+      assert.equal(lockedBinary.operation, "write-managed-setting");
+      assert.equal(lockedBinary.managedSetting, "providerInstances.claudeAgent.config.binaryPath");
+      const lockedVariable = yield* service
+        .updateProviderInstance({
+          operation: "upsert",
+          instanceId: claudeId,
+          instance: { ...claudeInstance!, environment: [userVariable] },
+        })
+        .pipe(Effect.flip);
+      assert.equal(
+        lockedVariable.managedSetting,
+        "providerInstances.claudeAgent.environment.CLAUDE_CODE_USE_BEDROCK",
+      );
+
+      // Saving what the client was shown, plus an unrelated edit, goes through without baking
+      // the policy into the file: the user's own values come back once the policy is removed.
+      yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId: claudeId,
+        instance: { ...claudeInstance!, displayName: "Claude (work)" },
+      });
+      yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId: codexId,
+        instance: effective.providerInstances[codexId]!,
+      });
+      const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(stored.providerInstances[claudeId], {
+        driver: claude,
+        displayName: "Claude (work)",
+        environment: [{ ...bedrock, value: "0" }, userVariable],
+        config: { binaryPath: "/usr/local/bin/claude" },
+      });
+      assert.isUndefined(stored.providerInstances[codexId]);
+
+      // Unlocked fields are the user's to override.
+      yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId: codexId,
+        instance: { driver: codex, config: { launchArgs: "--mine" } },
+      });
+      assert.deepEqual((yield* service.getSettings).providerInstances[codexId]?.config, {
+        launchArgs: "--mine",
+      });
+    }).pipe(Effect.provide(layerServerSettings(policy))),
+  );
+});

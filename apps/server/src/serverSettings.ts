@@ -422,17 +422,32 @@ function selectionSupportsTextGeneration(
   return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
 }
 
-function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection) &&
-    selectionSupportsTextGeneration(settings, settings.textGenerationModelSelection)
+type DriverAllowed = (driver: ProviderDriverKind) => boolean;
+const anyDriver: DriverAllowed = () => true;
+
+function resolveTextGenerationProvider(
+  settings: ServerSettings,
+  isDriverAllowed: DriverAllowed = anyDriver,
+): ServerSettings {
+  const selection = settings.textGenerationModelSelection;
+  return isModelSelectionProviderEnabled(settings, selection) &&
+    selectionSupportsTextGeneration(settings, selection) &&
+    isDriverAllowed(
+      settings.providerInstances[selection.instanceId]?.driver ??
+        ProviderDriverKind.make(selection.instanceId),
+    )
     ? settings
-    : fallbackTextGenerationProvider(settings);
+    : fallbackTextGenerationProvider(settings, isDriverAllowed);
 }
 
-function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
+function fallbackTextGenerationProvider(
+  settings: ServerSettings,
+  isDriverAllowed: DriverAllowed,
+): ServerSettings {
   const fallback = fallbackTextGenerationModelSelection(
     settings.providerInstances,
     (instanceId, driver) =>
+      isDriverAllowed(driver) &&
       resolveProviderInstanceEnabled(
         settings.providerInstances[instanceId] ?? { driver, config: {} },
       ),
@@ -570,10 +585,17 @@ const make = Effect.gen(function* () {
   const pathService = yield* Path.Path;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const sql = yield* SqlClient.SqlClient;
-  const { settings: managed, summary: managedPolicy } = yield* ManagedPolicy.ManagedPolicy;
+  const {
+    settings: managed,
+    providers: managedProviders,
+    summary: managedPolicy,
+  } = yield* ManagedPolicy.ManagedPolicy;
   // Locks are laid over every settings value that leaves this service, never persisted.
   const toEffective = (settings: ServerSettings) =>
-    resolveTextGenerationProvider(managed.applyLocks(settings));
+    resolveTextGenerationProvider(
+      managedProviders.applyLimits(managed.applyLocks(settings)),
+      managedProviders.isDriverAllowed,
+    );
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
@@ -1040,7 +1062,25 @@ const make = Effect.gen(function* () {
             managedBy: managedPolicy?.organization,
           });
         }
-        const next = vetted.settings;
+        const vettedProviders = managedProviders.vetWrite(current, vetted.settings);
+        if (vettedProviders._tag === "Locked") {
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "write-managed-setting",
+            managedSetting: vettedProviders.path,
+            managedBy: managedPolicy?.organization,
+          });
+        }
+        if (vettedProviders._tag === "Disallowed") {
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "use-disallowed-provider",
+            providerInstanceId: vettedProviders.instanceId,
+            providerLabel: vettedProviders.label,
+            managedBy: managedPolicy?.organization,
+          });
+        }
+        const next = vettedProviders.settings;
         const materialized = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
             const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
