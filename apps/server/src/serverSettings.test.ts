@@ -2012,6 +2012,29 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
       assert.isTrue(stored.enableAgentDeviceAccess);
     }).pipe(Effect.provide(layerServerSettings(policy))),
   );
+  it.effect("accepts a project override that brings the locked value inside a new setting", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const projectId = ProjectId.make("project-text-generation");
+      const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-locked" };
+
+      yield* service.updateSettings({
+        projectSettingsOverrides: { [projectId]: { textGenerationModelSelection: selection } },
+      });
+
+      const project = (yield* service.getSettings).projectSettingsOverrides[projectId];
+      assert.equal(project?.textGenerationModelSelection?.model, "gpt-locked");
+    }).pipe(
+      Effect.provide(
+        layerServerSettings({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: { "textGenerationModelSelection.model": { value: "gpt-locked", locked: true } },
+        }),
+      ),
+    ),
+  );
+
   it.effect("lowers default runtime modes above the ceiling without rewriting them", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -2089,7 +2112,11 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
       yield* fs.writeFileString(
         config.settingsPath,
         JSON.stringify({
-          providerInstances: { [cursorId]: { driver: cursor, enabled: true } },
+          providerInstances: {
+            [cursorId]: { driver: cursor, enabled: true },
+            // A default instance id is no proof of its driver.
+            codex: { driver: cursor, enabled: true },
+          },
           textGenerationModelSelection: { instanceId: cursorId, model: "auto" },
         }),
       );
@@ -2098,7 +2125,7 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
       // Never deleted: the instance stays for its threads, and the registry shows it unavailable.
       assert.equal(settings.providerInstances[cursorId]?.driver, cursor);
       // Built-in text generation does not fall back onto a disallowed driver either.
-      assert.equal(settings.textGenerationModelSelection.instanceId, "codex");
+      assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
 
       const rejected = yield* service
         .updateProviderInstance({
@@ -2144,7 +2171,7 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
           providerInstances: {
             [claudeId]: {
               driver: claude,
-              environment: [{ ...bedrock, value: "0" }, userVariable],
+              environment: [{ ...bedrock, value: "0" }, userVariable, { ...bedrock, value: "2" }],
               config: { binaryPath: "/usr/local/bin/claude" },
             },
           },
@@ -2197,7 +2224,7 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
       assert.deepEqual(stored.providerInstances[claudeId], {
         driver: claude,
         displayName: "Claude (work)",
-        environment: [{ ...bedrock, value: "0" }, userVariable],
+        environment: [{ ...bedrock, value: "0" }, { ...bedrock, value: "2" }, userVariable],
         config: { binaryPath: "/usr/local/bin/claude" },
       });
       assert.isUndefined(stored.providerInstances[codexId]);
@@ -2234,6 +2261,50 @@ it.layer(NodeServices.layer)("server settings under a runtime mode ceiling", (it
       },
     },
   };
+
+  it.effect("keeps the secret of a variable it hides when the instance is saved", () => {
+    const shared = ServerSecretStore.layer.pipe(
+      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+      Layer.provideMerge(
+        Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-hidden-secret-" })),
+      ),
+    );
+    const withPolicy = <A, E>(
+      document: ManagedPolicyDocument | undefined,
+      use: (service: ServerSettingsModule.ServerSettingsService["Service"]) => Effect.Effect<A, E>,
+    ) =>
+      ServerSettingsModule.ServerSettingsService.pipe(
+        Effect.flatMap(use),
+        Effect.provide(
+          ServerSettingsModule.layer.pipe(Layer.provide(ManagedPolicy.layerTest(document))),
+        ),
+      );
+    const claudeId = ProviderInstanceId.make("claudeAgent");
+    const token = { name: "ANTHROPIC_API_KEY", value: "sk-kept", sensitive: true };
+    return Effect.gen(function* () {
+      yield* withPolicy(undefined, (service) =>
+        service.updateProviderInstance({
+          operation: "upsert",
+          instanceId: claudeId,
+          instance: { driver: claude, environment: [token] },
+        }),
+      );
+      // The ceiling shows only pinned variables, so the client saves without the token.
+      yield* withPolicy(policy, (service) =>
+        service.getSettings.pipe(
+          Effect.flatMap((settings) =>
+            service.updateProviderInstance({
+              operation: "upsert",
+              instanceId: claudeId,
+              instance: { ...settings.providerInstances[claudeId]!, displayName: "Claude (work)" },
+            }),
+          ),
+        ),
+      );
+      const restored = yield* withPolicy(undefined, (service) => service.getSettings);
+      assert.equal(restored.providerInstances[claudeId]?.environment?.[0]?.value, token.value);
+    }).pipe(Effect.provide(shared));
+  });
 
   it.effect("ignores stored launch configuration and refuses new values", () =>
     Effect.gen(function* () {

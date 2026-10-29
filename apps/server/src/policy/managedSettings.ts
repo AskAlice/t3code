@@ -76,6 +76,14 @@ const jsonEqual = (left: unknown, right: unknown): boolean => {
   );
 };
 
+/** Whether `value` holds a key `existing` does not, at any depth. */
+const addsKeys = (existing: unknown, value: unknown): boolean =>
+  isRecord(existing) &&
+  isRecord(value) &&
+  Object.entries(value).some(([key, child]) =>
+    key in existing ? addsKeys(existing[key], child) : true,
+  );
+
 /**
  * How a policy's `settings` shape the server's settings. Policy values are never written to
  * the user's settings file: defaults fill keys the file leaves out, and locks are laid over the
@@ -200,6 +208,23 @@ export function makeManagedSettings(
   // nested key or a value of the wrong type does not survive the round trip.
   const builtIn = encodeSettings(DEFAULT_SERVER_SETTINGS);
   const all = [...defaults, ...locks];
+  // A user's stored null would leave a nested lock building a partial object, so lock the whole
+  // setting instead.
+  const insideNullable = all.find((entry) =>
+    entry.segments
+      .slice(0, -1)
+      .some((_, index) =>
+        Exit.isSuccess(
+          decodeSettingsExit(setPath(builtIn, entry.segments.slice(0, index + 1), null)),
+        ),
+      ),
+  );
+  if (insideNullable !== undefined) {
+    return {
+      _tag: "Invalid",
+      reason: `"${insideNullable.path}" is inside a setting that can be empty; manage "${insideNullable.segments[0]}" as a whole`,
+    };
+  }
   const applied = all.reduce<unknown>(
     (tree, entry) => setPath(tree, entry.segments, entry.value),
     builtIn,
@@ -214,6 +239,18 @@ export function makeManagedSettings(
     return {
       _tag: "Invalid",
       reason: `"${lost.path}" is not a setting this version can manage, or its value is invalid`,
+    };
+  }
+  // Defaults fill in what the file leaves out, so an entry a default adds to a record such as
+  // `providerInstances` would come back each time the user removed it.
+  const addsEntry = defaults.find((entry) => {
+    const existing = getPath(builtIn, entry.segments);
+    return existing === undefined ? entry.segments.length > 1 : addsKeys(existing, entry.value);
+  });
+  if (addsEntry !== undefined) {
+    return {
+      _tag: "Invalid",
+      reason: `"${addsEntry.path}" adds entries users could not remove; lock it instead`,
     };
   }
   // A managed default above the ceiling would start every thread in a mode the policy refuses.
@@ -287,10 +324,14 @@ export function makeManagedSettings(
     if (changed !== undefined) return { _tag: "Locked", path: changed.path };
     const kept = locks.reduce<unknown>(
       (tree, entry) =>
-        lockTargets(tree, entry).reduce<unknown>(
-          (result, target) => setPath(result, target, getPath(before, target)),
-          tree,
-        ),
+        lockTargets(tree, entry).reduce<unknown>((result, target) => {
+          // A parent the write adds holds the locked value already; removing only the locked key
+          // inside it would leave a partial object.
+          const added = target
+            .slice(0, -1)
+            .some((_, index) => getPath(before, target.slice(0, index + 1)) === undefined);
+          return added ? result : setPath(result, target, getPath(before, target));
+        }, tree),
       after,
     );
     return { _tag: "Allowed", settings: decodeSettings(kept) };

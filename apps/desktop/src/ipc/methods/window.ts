@@ -73,19 +73,31 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
-/** Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read, stops them. */
-export const getRelayTelemetryEnabled = DesktopIpc.makeSyncIpcMethod({
-  channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
-    if (!isRelayTracingEnabled(yield* HostProcess.Environment)) return false;
+/**
+ * Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read,
+ * stops them. Read once here: a sync IPC handler cannot wait on the filesystem.
+ */
+export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.installRelayTelemetry")(
+  function* () {
+    const ipc = yield* DesktopIpc.DesktopIpc;
     const { platform } = yield* DesktopEnvironment.DesktopEnvironment;
-    return yield* readManagedPolicyFile(managedPolicyPath(platform)).pipe(
-      Effect.map((document) => document?.limits?.telemetry !== false),
-      Effect.orElseSucceed(() => false),
+    const enabled =
+      isRelayTracingEnabled(yield* HostProcess.Environment) &&
+      (yield* readManagedPolicyFile(managedPolicyPath(platform)).pipe(
+        Effect.map((document) => document?.limits?.telemetry !== false),
+        Effect.orElseSucceed(() => false),
+      ));
+    yield* ipc.handleSync(
+      DesktopIpc.makeSyncIpcMethod({
+        channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
+        result: Schema.Boolean,
+        handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
+          return enabled;
+        }),
+      }),
     );
-  }),
-});
+  },
+);
 
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,

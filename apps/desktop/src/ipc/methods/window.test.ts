@@ -24,9 +24,11 @@ import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as IpcChannels from "../channels.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
-  getRelayTelemetryEnabled,
+  installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
 } from "./window.ts";
@@ -178,20 +180,34 @@ describe("getLocalEnvironmentBootstraps", () => {
   });
 });
 
-describe("getRelayTelemetryEnabled", () => {
+describe("installRelayTelemetryEnabled", () => {
+  // The renderer reads this over sync IPC, so the answer must not wait on the filesystem.
   const relayTelemetryEnabled = (env: NodeJS.ProcessEnv, policyFile?: string) =>
-    getRelayTelemetryEnabled.handler().pipe(
-      Effect.provideService(HostProcess.Environment, env),
-      Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
-        platform: "linux",
-      } as DesktopEnvironment.DesktopEnvironment["Service"]),
-      Effect.provide(
-        FileSystem.layerNoop({
-          exists: () => Effect.succeed(policyFile !== undefined),
-          readFileString: () => Effect.succeed(policyFile ?? ""),
-        }),
-      ),
-    );
+    Effect.gen(function* () {
+      const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
+      const ipcMain: DesktopIpc.DesktopIpcMain = {
+        removeHandler: () => undefined,
+        handle: () => undefined,
+        removeAllListeners: (channel) => void listeners.delete(channel),
+        on: (channel, listener) => void listeners.set(channel, listener),
+      };
+      yield* installRelayTelemetryEnabled().pipe(
+        Effect.provide(DesktopIpc.layer(ipcMain)),
+        Effect.provideService(HostProcess.Environment, env),
+        Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
+          platform: "linux",
+        } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        Effect.provide(
+          FileSystem.layerNoop({
+            exists: () => Effect.promise(() => Promise.resolve(policyFile !== undefined)),
+            readFileString: () => Effect.promise(() => Promise.resolve(policyFile ?? "")),
+          }),
+        ),
+      );
+      const event = { returnValue: undefined as unknown };
+      listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
+      return event.returnValue;
+    }).pipe(Effect.scoped);
 
   it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
     Effect.gen(function* () {

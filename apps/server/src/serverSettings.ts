@@ -465,7 +465,8 @@ function fallbackTextGenerationProvider(
   const fallback = fallbackTextGenerationModelSelection(
     settings.providerInstances,
     (instanceId, driver) =>
-      isDriverAllowed(driver) &&
+      // A default instance id can be configured with another driver.
+      isDriverAllowed(settings.providerInstances[instanceId]?.driver ?? driver) &&
       resolveProviderInstanceEnabled(
         settings.providerInstances[instanceId] ?? { driver, config: {} },
       ),
@@ -1092,12 +1093,8 @@ const make = Effect.gen(function* () {
           });
         }
         const updated = yield* update(current);
-        const persisted = yield* persistSettingsSecrets(current, updated);
-        const vetted = managed.vetWrite(
-          current,
-          yield* normalizeServerSettings(persisted.settings),
-          patch,
-        );
+        // Vet before secrets: a variable the policy hides from clients is not one they removed.
+        const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
           return yield* new ServerSettingsError({
             settingsPath,
@@ -1124,7 +1121,8 @@ const make = Effect.gen(function* () {
             managedBy: managedPolicy?.organization,
           });
         }
-        const next = vettedProviders.settings;
+        const persisted = yield* persistSettingsSecrets(current, vettedProviders.settings);
+        const next = yield* normalizeServerSettings(persisted.settings);
         const materializedNext = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
             yield* invalidateMaterialized;

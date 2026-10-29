@@ -488,10 +488,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     mode={uniform("branchNamingMode")}
                     prefix={uniform("branchNamePrefix")}
                     instructions={uniform("branchNameInstructions")}
-                    disabled={
-                      disabledFor("branchNamingMode") ||
-                      managed("branchNamePrefix", "branchNameInstructions") !== undefined
-                    }
+                    disabled={{
+                      mode: disabledFor("branchNamingMode"),
+                      prefix: disabledFor("branchNamePrefix"),
+                      instructions: disabledFor("branchNameInstructions"),
+                    }}
                     onChange={write}
                   />
                 </>

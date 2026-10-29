@@ -1211,6 +1211,7 @@ export function ProviderInstanceCard({
                   onCommit={updateEnvironmentField}
                   onRemove={removeEnvironmentField}
                   managedReason={
+                    instanceLocks?.wholeEnvironment ||
                     instanceLocks?.environmentNames.has(field.name)
                       ? instanceLocks.reason
                       : undefined

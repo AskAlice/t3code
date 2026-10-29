@@ -1,6 +1,8 @@
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { Argument, Command } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
 
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -47,8 +49,17 @@ const checkCommand = Command.make("check", {
   file: Argument.String("file").pipe(Argument.withDescription("Policy file to validate.")),
 }).pipe(
   Command.withDescription("Validate a policy file before deploying it."),
-  Command.withHandler(({ file }) =>
-    ManagedPolicy.load(file).pipe(Effect.flatMap((policy) => Console.log(describePolicy(policy)))),
+  Command.withHandler(
+    Effect.fn("cli.policy.check")(function* ({ file }) {
+      // Startup treats a missing file as no policy; a draft that is not there checks nothing.
+      if (!(yield* (yield* FileSystem.FileSystem).exists(file))) {
+        return yield* new CliError.UserError({
+          cause: file,
+          userMessage: `No policy file at ${file}.`,
+        });
+      }
+      yield* Console.log(describePolicy(yield* ManagedPolicy.load(file)));
+    }),
   ),
 );
 

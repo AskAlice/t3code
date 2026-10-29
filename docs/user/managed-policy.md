@@ -36,6 +36,11 @@ Each key under `settings` names a server setting by its path in the server's `se
 - `"locked": true` sets the value and stops users and agents from changing it, including in
   per-project settings. Settings shows the control as **Managed by** your organization.
 
+A default changes an existing setting but cannot add an entry, such as a provider instance, because
+users could never remove it. Lock the entry, or set provider fields with
+[`providers.instances`](#providers). A setting that can be empty, such as `defaultModelSelection`,
+is managed as a whole rather than one field inside it.
+
 T3 Code never writes policy values into the user's own settings. If you remove the file, users get
 back the settings they had chosen.
 

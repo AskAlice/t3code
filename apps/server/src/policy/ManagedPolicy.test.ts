@@ -85,6 +85,27 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             ...base,
             settings: { projectSettingsOverrides: { value: {}, locked: true } },
           }),
+          // The user could never remove a provider instance a default keeps adding back.
+          JSON.stringify({
+            ...base,
+            settings: {
+              "providerInstances.codex_work": {
+                value: { driver: "codex", enabled: true },
+                locked: false,
+              },
+            },
+          }),
+          JSON.stringify({
+            ...base,
+            settings: {
+              providerInstances: { value: { codex_work: { driver: "codex" } }, locked: false },
+            },
+          }),
+          // A user's stored null would leave the lock building half a model selection.
+          JSON.stringify({
+            ...base,
+            settings: { "defaultModelSelection.model": { value: "gpt-5.4", locked: true } },
+          }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -92,8 +113,11 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 6);
+      assert.lengthOf(reasons, 9);
       assert.include(reasons[3], "storageCleanup.logsAfterDayz");
+      assert.include(reasons[6], "adds entries users could not remove");
+      assert.include(reasons[7], "adds entries users could not remove");
+      assert.include(reasons[8], 'manage "defaultModelSelection" as a whole');
     }),
   );
 

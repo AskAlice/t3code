@@ -209,13 +209,20 @@ const overlayInstance = (
     value: variable.value,
     sensitive: false,
   }));
-  const environment =
-    rule.environment === "all" ? pinnedEnvironment : [...(instance.environment ?? [])];
+  const pinnedByName = new Map(pinnedEnvironment.map((variable) => [variable.name, variable]));
+  const environment: Array<NonNullable<ProviderInstanceConfig["environment"]>[number]> =
+    rule.environment === "all" ? pinnedEnvironment : [];
   if (rule.environment !== "all") {
+    const seen = new Set<string>();
+    // The last entry for a name wins at launch, so a lock replaces every entry with that name.
+    for (const variable of instance.environment ?? []) {
+      const pinned = rule.environment === "locked" ? pinnedByName.get(variable.name) : undefined;
+      if (pinned === undefined) environment.push(variable);
+      else if (!seen.has(variable.name)) environment.push(pinned);
+      seen.add(variable.name);
+    }
     for (const pinned of pinnedEnvironment) {
-      const index = environment.findIndex((existing) => existing.name === pinned.name);
-      if (index === -1) environment.push(pinned);
-      else if (rule.environment === "locked") environment[index] = pinned;
+      if (!seen.has(pinned.name)) environment.push(pinned);
     }
   }
   const { config: _config, environment: _environment, ...envelope } = instance;
@@ -367,10 +374,17 @@ export function makeManagedProviders(
       const sent = environment.find((existing) => existing.name === variable.name);
       const kept = storedVariable(variable.name);
       if ((sent !== undefined && echoed(sent)) || sameVariable(sent, kept)) {
-        // Put the user's own value back where it was sent, or drop the echoed policy value.
-        environment = environment.flatMap((existing) =>
-          existing.name !== variable.name ? [existing] : kept === undefined ? [] : [kept],
+        // Put the user's own entries back where it was sent, or drop the echoed policy value.
+        const storedEntries = (stored?.environment ?? []).filter(
+          (existing) => existing.name === variable.name,
         );
+        let restored = false;
+        environment = environment.flatMap((existing) => {
+          if (existing.name !== variable.name) return [existing];
+          if (restored) return [];
+          restored = true;
+          return storedEntries;
+        });
       } else if (rule.environment === "locked") {
         return {
           _tag: "Locked",

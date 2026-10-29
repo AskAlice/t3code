@@ -90,8 +90,9 @@ describe("collectServerUpdateTargets", () => {
     const managed = (
       id: string,
       updates: { mode: "off" } | { mode: "auto"; allowNightly: false },
+      selfUpdate: "boot-service" | "desktop-managed" = "boot-service",
     ) => {
-      const base = machine(id, "0.0.40", "boot-service");
+      const base = machine(id, "0.0.40", selfUpdate);
       return {
         ...base,
         serverConfig: {
@@ -103,6 +104,8 @@ describe("collectServerUpdateTargets", () => {
     const machines = [
       managed("off", { mode: "off" }),
       managed("no-nightly", { mode: "auto", allowNightly: false }),
+      // A desktop app updates from its own feed, whatever track this app is on.
+      managed("desktop-no-nightly", { mode: "auto", allowNightly: false }, "desktop-managed"),
     ];
 
     expect(

@@ -101,12 +101,15 @@ export function collectServerUpdateTargets(
       skip(unavailable ?? "not connected");
       continue;
     }
-    const managedDenial = managedUpdateDenial(config, targetVersion);
+    const selfUpdate = resolveServerSelfUpdateCapability(config);
+    const managedDenial = managedUpdateDenial(
+      config,
+      selfUpdate === "desktop-managed" ? undefined : targetVersion,
+    );
     if (managedDenial !== undefined) {
       skip(managedDenial);
       continue;
     }
-    const selfUpdate = resolveServerSelfUpdateCapability(config);
     const desktopAppUpdate = supportsDesktopAppUpdate(config);
     if (selfUpdate === null) {
       skip("needs a manual update");
@@ -215,16 +218,20 @@ export function localSwitchBlockReason(
 
 /** Servers move to the release; desktop-managed hosts reinstall their app on its track. A desktop
  * host already current gets a track-only request, since its saved track may still differ. */
-/** The server refuses these with the same message; say so before the run instead of after. */
+/**
+ * The server refuses these with the same message; say so before the run instead of after.
+ * `targetVersion` is undefined when the server picks its own version, as desktop apps do.
+ */
 function managedUpdateDenial(
   config: NonNullable<UpdateEverythingMachine["serverConfig"]>,
-  targetVersion: string,
+  targetVersion: string | undefined,
 ): string | undefined {
   const policy = config.managedPolicy;
   return (
     managedUpdatesDenial(policy) ??
     (policy !== undefined &&
     policy.limits?.updates?.allowNightly === false &&
+    targetVersion !== undefined &&
     cliReleaseChannelOf(targetVersion) !== "stable"
       ? managedUpdatesMessage(policy.organization)
       : undefined)

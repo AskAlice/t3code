@@ -307,4 +307,53 @@ it.layer(layerWithCeiling)("runtime mode ceiling", (it) => {
       assert.equal((yield* projections.getThreadShell(threadId))?.title, "After");
     }),
   );
+
+  it.effect("starts a queue that waited above the ceiling once the mode is lowered", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("thread:ceiling-queue");
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch(sendMessage(threadId, "running"));
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "waiting"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      // The policy arrives with the thread above it and its first run ending.
+      const { thread, runs } = yield* orchestrator.getThreadRecords(threadId, ["runs"]);
+      const [running, waiting] = runs;
+      const occurredAt = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:ceiling-queue:raise"),
+            type: "thread.runtime-mode-updated",
+            threadId,
+            occurredAt,
+            payload: { ...thread, runtimeMode: "full-access" },
+          },
+          {
+            id: EventId.make("event:ceiling-queue:complete"),
+            type: "run.updated",
+            threadId,
+            runId: running!.id,
+            providerInstanceId: running!.providerInstanceId,
+            occurredAt,
+            payload: { ...running!, status: "completed" },
+          },
+        ],
+      });
+
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("lower:ceiling-queue"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const started = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs.find(
+        (run) => run.id === waiting!.id,
+      );
+      assert.notEqual(started?.status, "queued");
+    }),
+  );
 });
