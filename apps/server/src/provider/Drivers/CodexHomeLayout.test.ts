@@ -3,9 +3,11 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import { CodexSettings } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
@@ -305,6 +307,45 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           expect(memoriesLinkResult._tag).toBe("Failure");
           expect(tmpLinkResult._tag).toBe("Failure");
         }),
+    );
+
+    it.effect("tells Windows users without symlink permission to turn on Developer Mode", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+        );
+        const symlinkDenied = FileSystem.FileSystem.of({
+          ...fileSystem,
+          symlink: (target, link) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "symlink",
+                pathOrDescriptor: target,
+                syscall: "symlink",
+                cause: Object.assign(
+                  new Error(`EPERM: operation not permitted, symlink '${target}' -> '${link}'`),
+                  { code: "EPERM", syscall: "symlink" },
+                ),
+              }),
+            ),
+        });
+
+        const error = yield* materializeCodexShadowHome(layout).pipe(
+          Effect.provideService(FileSystem.FileSystem, symlinkDenied),
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.flip,
+        );
+
+        expect(error.message).toContain("Developer Mode");
+        expect(error.message).toContain(shadowHome);
+      }),
     );
 
     it.effect("rejects shadow homes that point at the shared home", () =>

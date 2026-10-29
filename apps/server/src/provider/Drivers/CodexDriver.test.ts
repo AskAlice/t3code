@@ -336,6 +336,103 @@ it.layer(layerTest)("CodexDriver", (it) => {
     checkManagedAccount,
   );
 
+  it.effect("managed check reports why the account's Codex home could not be set up", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex-additional-account");
+      const credentials = new Map<string, Uint8Array>();
+      const secrets = ServerSecretStore.ServerSecretStore.of({
+        get: (key) => Effect.sync(() => Option.fromUndefinedOr(credentials.get(key))),
+        set: (key, value) =>
+          Effect.sync(() => {
+            credentials.set(key, value);
+          }),
+        remove: (key) =>
+          Effect.sync(() => {
+            credentials.delete(key);
+          }),
+        create: () => Effect.die("unused"),
+        getOrCreateRandom: () => Effect.die("unused"),
+      });
+      const fs = yield* FileSystem.FileSystem;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const installation = yield* CodexInstallation.CodexInstallation;
+      const executable = {
+        executablePath: "/user/bin/codex",
+        managedVersionDirectory: null,
+        source: "local" as const,
+        version: "0.156.1",
+      };
+      const shadowHome = NodePath.join(
+        serverConfig.stateDir,
+        "providers",
+        "codex",
+        instanceId,
+        "shadow",
+      );
+      const symlinkDenied = FileSystem.FileSystem.of({
+        ...fs,
+        symlink: (target) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "FileSystem",
+              method: "symlink",
+              pathOrDescriptor: target,
+              syscall: "symlink",
+              cause: Object.assign(new Error("EPERM: operation not permitted, symlink"), {
+                code: "EPERM",
+              }),
+            }),
+          ),
+      });
+      const snapshot = yield* Effect.gen(function* () {
+        const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
+        yield* store.set(
+          new TextEncoder().encode(
+            yield* encodeCredentials({
+              clientId: "oaiapp_test",
+              accessToken: "dummy-owned-access",
+              refreshToken: "dummy-refresh",
+              expiresAt: Number.MAX_SAFE_INTEGER,
+              earliestRefreshAt: null,
+              scopes: ["chatgpt.tokens.use.direct"],
+              subject: "test-user",
+              email: "account@example.test",
+            }),
+          ),
+        );
+        const instance = yield* CodexDriver.create({
+          instanceId,
+          displayName: "Additional account",
+          enabled: true,
+          environment: [],
+          config: {
+            ...CodexDriver.defaultConfig(),
+            setupMode: "managed",
+            homePath: NodePath.join(serverConfig.stateDir, "shared-codex-home"),
+          },
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, symlinkDenied),
+          Effect.provideService(
+            CodexInstallation.CodexInstallation,
+            CodexInstallation.CodexInstallation.of({
+              ...installation,
+              resolve: () => Effect.succeed(executable),
+              acquire: () => Effect.succeed(executable),
+            }),
+          ),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+        return yield* instance.snapshot.refresh;
+      }).pipe(Effect.provideService(ServerSecretStore.ServerSecretStore, secrets));
+
+      expect(snapshot.message).not.toBe(
+        "Could not check Codex right now. Retry, or reconnect in provider settings.",
+      );
+      expect(snapshot.message).toContain(shadowHome);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect.skipIf(windowsHost)(
     "runs the standalone updater against the shared home, not the shadow home",
     () =>
