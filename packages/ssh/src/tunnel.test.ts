@@ -364,6 +364,45 @@ describe("ssh tunnel scripts", () => {
   );
 });
 
+describe("ssh environment manager release", () => {
+  it.effect("releasing the manager leaves a launched remote server running", () =>
+    Effect.gen(function* () {
+      let stops = 0;
+      let tunnelKills = 0;
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-G")) return makeSuccessfulProcess("");
+          if (args.includes("-N"))
+            return makeRunningProcess(() => {
+              tunnelKills += 1;
+            });
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          stops += 1;
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        yield* manager.ensureEnvironment(target);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+      assert.equal(tunnelKills, 1, "quit closes the port forward");
+      assert.equal(stops, 0, "quit sent a remote stop to the launched server");
+    }),
+  );
+});
+
 // On macOS, Node can bind 127.0.0.1:<port> while another process (such as the
 // desktop app with network access on) listens on *:<port>. Linux refuses that
 // bind unless both sockets set SO_REUSEPORT, so on Linux the preload adds it to
