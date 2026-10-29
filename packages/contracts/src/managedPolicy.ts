@@ -100,7 +100,9 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
       allowedDrivers: Schema.optionalKey(Schema.Array(ProviderDriverKind)),
       /**
        * Per driver, the instance fields users cannot change, as dot paths into the instance
-       * envelope: `config.binaryPath`, `config.launchArgs`, `environment.<NAME>`.
+       * envelope: `config.binaryPath`, `config.launchArgs`, `environment.<NAME>`. A bare
+       * `environment` means every variable, as under `maxRuntimeMode`, where each driver's
+       * launch configuration belongs to the administrator.
        */
       lockedInstanceFields: Schema.optionalKey(
         Schema.Record(ProviderDriverKind, Schema.Array(Schema.String)),

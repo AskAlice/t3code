@@ -7,7 +7,7 @@ import * as Path from "effect/Path";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
 import * as ManagedPolicy from "./ManagedPolicy.ts";
-import { disallowedDriverReason } from "./managedProviders.ts";
+import { disallowedDriverReason, providerHostEnvironment } from "./managedProviders.ts";
 
 it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
   const loadFrom = (contents: string | undefined) =>
@@ -107,7 +107,24 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
           limits: { maxRuntimeMode: "auto-accept-edits" },
         }),
       );
-      assert.deepEqual(policy.summary?.limits, { maxRuntimeMode: "auto-accept-edits" });
+      const { providers, ...limits } = policy.summary?.limits ?? {};
+      assert.deepEqual(limits, { maxRuntimeMode: "auto-accept-edits" });
+      // Under a ceiling, each driver's launch configuration is the administrator's.
+      assert.deepEqual(providers?.lockedInstanceFields?.[ProviderDriverKind.make("claudeAgent")], [
+        "config.binaryPath",
+        "config.launchArgs",
+        "config.homePath",
+        "environment",
+      ]);
+      assert.deepEqual(providers?.lockedInstanceFields?.[ProviderDriverKind.make("acpRegistry")], [
+        "config.commandPath",
+        "config.commandArgs",
+        "environment",
+      ]);
+      // The host variable that replaces Codex's launch arguments is ignored too.
+      const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "-c mcp_servers.x.command=sh" };
+      assert.deepEqual(providerHostEnvironment(policy.summary, host), { PATH: "/usr/bin" });
+      assert.strictEqual(providerHostEnvironment(undefined, host), host);
     }),
   );
 

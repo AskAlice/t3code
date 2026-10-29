@@ -161,6 +161,11 @@ export const layer: Layer.Layer<
         ? ({} as ProviderInstanceConfigMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
+    // Drivers launch from the host environment, minus overrides a runtime-mode ceiling forbids.
+    const hostEnvironment = ManagedProviders.providerHostEnvironment(
+      serverSettings.managedPolicy,
+      yield* HostProcess.Environment,
+    );
     // Instances of drivers the policy leaves out stay listed, as unavailable, so their threads
     // explain why instead of losing their provider.
     const layerMutable = ProviderInstanceRegistry.layer({
@@ -172,6 +177,7 @@ export const layer: Layer.Layer<
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
       Layer.provide(AcpRegistrySupport.layerFromHost),
       Layer.provide(ProviderHostLive.layer),
+      Layer.provide(Layer.succeed(HostProcess.Environment, hostEnvironment)),
     );
 
     return layerSettingsWatcher(settingsChanges).pipe(Layer.provideMerge(layerMutable));

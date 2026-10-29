@@ -12,6 +12,7 @@ import {
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
   resolveProviderInstanceEnabled,
+  type RuntimeMode,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
@@ -63,6 +64,21 @@ const KNOWN_DRIVERS: ReadonlyMap<ProviderDriverKind, KnownDriver> = new Map([
 const PINNED_CONFIG_FIELDS = ["binaryPath", "launchArgs"] as const;
 type PinnedConfigField = (typeof PINNED_CONFIG_FIELDS)[number];
 
+/**
+ * Fields that decide what a provider starts and reads on startup; a driver has those its schema
+ * has. Under a ceiling they are the administrator's: a wrapper binary, a skip-permissions flag, or
+ * a config directory with allow rules each outrank T3 Code's mode, and no flag filter stops a wrapper.
+ */
+const LAUNCH_CONFIG_FIELDS = [
+  "binaryPath",
+  "launchArgs",
+  "homePath",
+  "shadowHomePath",
+  "commandPath",
+  "commandArgs",
+  "serverUrl",
+] as const;
+
 export type ProviderWriteVerdict =
   | { readonly _tag: "Allowed"; readonly settings: ServerSettings }
   | { readonly _tag: "Locked"; readonly path: string }
@@ -86,7 +102,10 @@ export interface ManagedProviders {
    * user's own values return once the policy is gone.
    */
   readonly vetWrite: (current: ServerSettings, next: ServerSettings) => ProviderWriteVerdict;
-  /** Per driver, the instance fields users cannot change, for clients. */
+  /**
+   * Per driver, the instance fields users cannot change, for clients. `environment` alone means
+   * every variable.
+   */
   readonly lockedInstanceFields: Readonly<Record<string, ReadonlyArray<string>>>;
 }
 
@@ -110,6 +129,24 @@ export const disallowedDriverReason = (
     : disallowedProviderMessage(summary?.organization, labelFor(driver));
 };
 
+/**
+ * Host variables that replace a provider's launch configuration. They come from whoever starts
+ * the server, so a runtime-mode ceiling, which makes launch configuration the administrator's,
+ * ignores them.
+ */
+const LAUNCH_OVERRIDE_VARIABLES = ["T3CODE_CODEX_LAUNCH_ARGS"] as const;
+
+/** The environment provider drivers launch from under the policy clients were told about. */
+export const providerHostEnvironment = (
+  summary: ManagedPolicySummary | undefined,
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => {
+  if (summary?.limits?.maxRuntimeMode === undefined) return environment;
+  const next = { ...environment };
+  for (const name of LAUNCH_OVERRIDE_VARIABLES) delete next[name];
+  return next;
+};
+
 const configRecord = (instance: ProviderInstanceConfig | undefined): Record<string, unknown> =>
   instance?.config !== null &&
   typeof instance?.config === "object" &&
@@ -117,11 +154,14 @@ const configRecord = (instance: ProviderInstanceConfig | undefined): Record<stri
     ? (instance.config as Record<string, unknown>)
     : {};
 
-/** Empty strings are how clients clear a field, so they count as unset. */
-const configString = (instance: ProviderInstanceConfig | undefined, field: string) => {
+/** Empty strings and empty lists are how clients clear a field, so they count as unset. */
+const configValue = (instance: ProviderInstanceConfig | undefined, field: string) => {
   const value = configRecord(instance)[field];
-  return value === "" ? undefined : value;
+  return value === "" || (Array.isArray(value) && value.length === 0) ? undefined : value;
 };
+
+const sameValue = (left: unknown, right: unknown) =>
+  left === right || JSON.stringify(left) === JSON.stringify(right);
 
 const sameVariable = (
   left: ProviderInstanceEnvironmentVariable | undefined,
@@ -136,31 +176,64 @@ const sameVariable = (
 const pinnedFields = (pin: ManagedProviderInstance): ReadonlyArray<PinnedConfigField> =>
   PINNED_CONFIG_FIELDS.filter((field) => pin[field] !== undefined);
 
+/**
+ * What the administrator owns on one driver's instances. `config` fields take the pin or the
+ * default, never the user's value; `fill` fields take the pin only where the user left them empty.
+ * `environment`: `all` runs with only pinned variables, `locked` lets them win, `fill` fills gaps.
+ */
+interface DriverRule {
+  readonly pin: ManagedProviderInstance | undefined;
+  readonly config: ReadonlyArray<string>;
+  readonly fill: ReadonlyArray<PinnedConfigField>;
+  readonly environment: "all" | "locked" | "fill";
+}
+
+const pinnedValue = (pin: ManagedProviderInstance | undefined, field: string): unknown =>
+  pin === undefined ? undefined : (pin as Record<string, unknown>)[field];
+
 const overlayInstance = (
   instance: ProviderInstanceConfig,
-  pin: ManagedProviderInstance,
+  rule: DriverRule,
 ): ProviderInstanceConfig => {
   const config = { ...configRecord(instance) };
-  for (const field of pinnedFields(pin)) {
-    if (pin.locked || configString(instance, field) === undefined) config[field] = pin[field];
+  for (const field of rule.config) {
+    const value = pinnedValue(rule.pin, field);
+    if (value === undefined) delete config[field];
+    else config[field] = value;
   }
-  const environment = [...(instance.environment ?? [])];
-  for (const variable of pin.environment ?? []) {
-    const pinned = { name: variable.name, value: variable.value, sensitive: false };
-    const index = environment.findIndex((existing) => existing.name === variable.name);
-    if (index === -1) environment.push(pinned);
-    else if (pin.locked) environment[index] = pinned;
+  for (const field of rule.fill) {
+    if (configValue(instance, field) === undefined) config[field] = rule.pin?.[field];
   }
+  const pinnedEnvironment = (rule.pin?.environment ?? []).map((variable) => ({
+    name: variable.name,
+    value: variable.value,
+    sensitive: false,
+  }));
+  const environment =
+    rule.environment === "all" ? pinnedEnvironment : [...(instance.environment ?? [])];
+  if (rule.environment !== "all") {
+    for (const pinned of pinnedEnvironment) {
+      const index = environment.findIndex((existing) => existing.name === pinned.name);
+      if (index === -1) environment.push(pinned);
+      else if (rule.environment === "locked") environment[index] = pinned;
+    }
+  }
+  const { config: _config, environment: _environment, ...envelope } = instance;
   return {
-    ...instance,
-    ...(pinnedFields(pin).length === 0 ? {} : { config }),
+    ...envelope,
+    ...(instance.config === undefined && Object.keys(config).length === 0 ? {} : { config }),
     ...(environment.length === 0 ? {} : { environment }),
   };
 };
 
-/** Build the overlay for a policy's `limits.providers`, or say why this build cannot enforce it. */
+/**
+ * Build the overlay for `limits.providers` and `limits.maxRuntimeMode`, or say why it cannot be
+ * enforced. A ceiling takes each driver's launch fields and its whole `environment`, which can
+ * carry `CLAUDE_CONFIG_DIR`, `PATH`, or `NODE_OPTIONS`; a deny list would miss the next one.
+ */
 export function makeManagedProviders(
   limits: ManagedProviderLimits,
+  maxRuntimeMode?: RuntimeMode,
 ):
   | { readonly _tag: "Valid"; readonly providers: ManagedProviders }
   | { readonly _tag: "Invalid"; readonly reason: string } {
@@ -190,6 +263,26 @@ export function makeManagedProviders(
     pins.set(driver, pin);
   }
 
+  const rules = new Map<ProviderDriverKind, DriverRule>();
+  for (const [driver, known] of KNOWN_DRIVERS) {
+    const pin = pins.get(driver);
+    if (maxRuntimeMode !== undefined) {
+      rules.set(driver, {
+        pin,
+        config: LAUNCH_CONFIG_FIELDS.filter((field) => known.configFields.has(field)),
+        fill: [],
+        environment: "all",
+      });
+    } else if (pin !== undefined) {
+      rules.set(driver, {
+        pin,
+        config: pin.locked ? pinnedFields(pin) : [],
+        fill: pin.locked ? [] : pinnedFields(pin),
+        environment: pin.locked ? "locked" : "fill",
+      });
+    }
+  }
+
   const allowed =
     limits.allowedDrivers === undefined ? undefined : new Set<string>(limits.allowedDrivers);
   const isDriverAllowed = (driver: ProviderDriverKind) => allowed?.has(driver) ?? true;
@@ -217,8 +310,8 @@ export function makeManagedProviders(
       if (providerInstances[instanceId] === undefined) providerInstances[instanceId] = { driver };
     }
     for (const [instanceId, instance] of Object.entries(providerInstances)) {
-      const pin = pins.get(instance.driver);
-      if (pin !== undefined) providerInstances[instanceId] = overlayInstance(instance, pin);
+      const rule = rules.get(instance.driver);
+      if (rule !== undefined) providerInstances[instanceId] = overlayInstance(instance, rule);
     }
     // A cleared selection falls back to the text generation model, which is resolved afterwards.
     const result: ServerSettings = {
@@ -238,48 +331,76 @@ export function makeManagedProviders(
     return result;
   };
 
-  const vetInstance = (
+  type Locked = { readonly _tag: "Locked"; readonly path: string };
+
+  /**
+   * Vet the environment a client sent. Pinned values it echoes back are dropped; anything else
+   * the administrator owns must match what is stored. Returns the environment to store.
+   */
+  const vetEnvironment = (
     instanceId: string,
     stored: ProviderInstanceConfig | undefined,
     next: ProviderInstanceConfig,
-    pin: ManagedProviderInstance,
+    rule: DriverRule,
   ):
-    | { readonly _tag: "Locked"; readonly path: string }
-    | { readonly _tag: "Kept"; readonly instance: ProviderInstanceConfig | undefined } => {
-    const config = { ...configRecord(next) };
-    for (const field of pinnedFields(pin)) {
-      const value = configString(next, field);
-      const storedValue = configString(stored, field);
-      if (value === pin[field] || value === storedValue) {
-        if (storedValue === undefined) delete config[field];
-        else config[field] = configRecord(stored)[field];
-      } else if (pin.locked) {
-        return { _tag: "Locked", path: `providerInstances.${instanceId}.config.${field}` };
+    | Locked
+    | {
+        readonly _tag: "Kept";
+        readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
+      } => {
+    const pinned = rule.pin?.environment ?? [];
+    const storedVariable = (name: string) =>
+      stored?.environment?.find((existing) => existing.name === name);
+    const echoed = (variable: ProviderInstanceEnvironmentVariable) =>
+      !variable.sensitive &&
+      pinned.some((pin) => pin.name === variable.name && pin.value === variable.value);
+    if (rule.environment === "all") {
+      // Only the pinned variables were shown, so the user's own stay as stored.
+      for (const variable of next.environment ?? []) {
+        if (echoed(variable) || sameVariable(variable, storedVariable(variable.name))) continue;
+        return { _tag: "Locked", path: `providerInstances.${instanceId}.environment` };
       }
+      return { _tag: "Kept", environment: stored?.environment ?? [] };
     }
     let environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> = next.environment ?? [];
-    for (const variable of pin.environment ?? []) {
+    for (const variable of pinned) {
       const sent = environment.find((existing) => existing.name === variable.name);
-      const storedVariable = stored?.environment?.find(
-        (existing) => existing.name === variable.name,
-      );
-      const resent = sent !== undefined && !sent.sensitive && sent.value === variable.value;
-      if (resent || sameVariable(sent, storedVariable)) {
+      const kept = storedVariable(variable.name);
+      if ((sent !== undefined && echoed(sent)) || sameVariable(sent, kept)) {
         // Put the user's own value back where it was sent, or drop the echoed policy value.
         environment = environment.flatMap((existing) =>
-          existing.name !== variable.name
-            ? [existing]
-            : storedVariable === undefined
-              ? []
-              : [storedVariable],
+          existing.name !== variable.name ? [existing] : kept === undefined ? [] : [kept],
         );
-      } else if (pin.locked) {
+      } else if (rule.environment === "locked") {
         return {
           _tag: "Locked",
           path: `providerInstances.${instanceId}.environment.${variable.name}`,
         };
       }
     }
+    return { _tag: "Kept", environment };
+  };
+
+  const vetInstance = (
+    instanceId: string,
+    stored: ProviderInstanceConfig | undefined,
+    next: ProviderInstanceConfig,
+    rule: DriverRule,
+  ): Locked | { readonly _tag: "Kept"; readonly instance: ProviderInstanceConfig | undefined } => {
+    const config = { ...configRecord(next) };
+    for (const field of [...rule.config, ...rule.fill]) {
+      const value = configValue(next, field);
+      const storedValue = configValue(stored, field);
+      if (sameValue(value, pinnedValue(rule.pin, field)) || sameValue(value, storedValue)) {
+        if (storedValue === undefined) delete config[field];
+        else config[field] = configRecord(stored)[field];
+      } else if (rule.config.includes(field)) {
+        return { _tag: "Locked", path: `providerInstances.${instanceId}.config.${field}` };
+      }
+    }
+    const vettedEnvironment = vetEnvironment(instanceId, stored, next, rule);
+    if (vettedEnvironment._tag === "Locked") return vettedEnvironment;
+    const { environment } = vettedEnvironment;
     const { config: _config, environment: _environment, ...envelope } = next;
     const kept: ProviderInstanceConfig = {
       ...envelope,
@@ -309,8 +430,8 @@ export function makeManagedProviders(
           label: labelFor(instance.driver),
         };
       }
-      const pin = pins.get(instance.driver);
-      if (pin === undefined) {
+      const rule = rules.get(instance.driver);
+      if (rule === undefined) {
         providerInstances[instanceId] = instance;
         continue;
       }
@@ -318,7 +439,7 @@ export function makeManagedProviders(
         instanceId,
         stored?.driver === instance.driver ? stored : undefined,
         instance,
-        pin,
+        rule,
       );
       if (vetted._tag === "Locked") return vetted;
       if (vetted.instance !== undefined) providerInstances[instanceId] = vetted.instance;
@@ -333,15 +454,17 @@ export function makeManagedProviders(
   };
 
   const lockedInstanceFields = Object.fromEntries(
-    [...pins]
-      .filter(([, pin]) => pin.locked)
-      .map(([driver, pin]) => [
-        driver,
-        [
-          ...pinnedFields(pin).map((field) => `config.${field}`),
-          ...(pin.environment ?? []).map((variable) => `environment.${variable.name}`),
-        ],
-      ]),
+    [...rules].flatMap(([driver, rule]) => {
+      const fields = [
+        ...rule.config.map((field) => `config.${field}`),
+        ...(rule.environment === "all"
+          ? ["environment"]
+          : rule.environment === "locked"
+            ? (rule.pin?.environment ?? []).map((variable) => `environment.${variable.name}`)
+            : []),
+      ];
+      return fields.length === 0 ? [] : [[driver, fields] as const];
+    }),
   );
 
   return {

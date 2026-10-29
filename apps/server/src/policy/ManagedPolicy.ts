@@ -68,11 +68,12 @@ export const fromDocument = Effect.fn("ManagedPolicy.fromDocument")(function* (
   if (settings._tag === "Invalid") {
     return yield* new ManagedPolicyFileError({ path, reason: settings.reason });
   }
+  // A ceiling alone also shapes providers: their launch configuration becomes the administrator's.
   const providerLimits = document.limits?.providers;
   const providers =
-    providerLimits === undefined
+    providerLimits === undefined && maxRuntimeMode === undefined
       ? undefined
-      : ManagedProviders.makeManagedProviders(providerLimits);
+      : ManagedProviders.makeManagedProviders(providerLimits ?? {}, maxRuntimeMode);
   if (providers?._tag === "Invalid") {
     return yield* new ManagedPolicyFileError({ path, reason: providers.reason });
   }
@@ -115,11 +116,11 @@ function summarizeLimits(
     ...(webhookTasks === undefined ? {} : { webhookTasks }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(browserCookieImport === undefined ? {} : { browserCookieImport }),
-    ...(providers === undefined
+    ...(providers?.allowedDrivers === undefined && Object.keys(lockedInstanceFields).length === 0
       ? {}
       : {
           providers: {
-            ...(providers.allowedDrivers === undefined
+            ...(providers?.allowedDrivers === undefined
               ? {}
               : { allowedDrivers: providers.allowedDrivers }),
             ...(Object.keys(lockedInstanceFields).length === 0 ? {} : { lockedInstanceFields }),
