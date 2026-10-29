@@ -1159,7 +1159,10 @@ describe("server state projection", () => {
 describe("launcher update resume", () => {
   const UPDATE_CONFIG = {
     ...CONFIG,
-    environment: { serverVersion: "0.0.30", capabilities: { serverSelfUpdateProgress: true } },
+    environment: {
+      serverVersion: "0.0.30",
+      capabilities: { serverSelfUpdate: "boot-service", serverSelfUpdateProgress: true },
+    },
   } as unknown as ServerConfig;
 
   const ready = (at: string, serverVersion: string, updateOutcome?: ServerSelfUpdateOutcome) =>
@@ -1185,6 +1188,7 @@ describe("launcher update resume", () => {
   const launchUpdate = Effect.fn("ServerUpdateTest.launchUpdate")(function* (host: {
     readonly accepting: Stream.Stream<ServerLifecycleStreamEvent>;
     readonly resumed: Stream.Stream<ServerLifecycleStreamEvent>;
+    readonly reconnectAfterBaseline?: boolean;
   }) {
     const started = yield* Deferred.make<void>();
     const resumeSubscribed = yield* Deferred.make<void>();
@@ -1213,20 +1217,23 @@ describe("launcher update resume", () => {
         const events = acknowledged
           ? Deferred.succeed(resumeSubscribed, undefined).pipe(Effect.as(host.resumed))
           : Effect.succeed(host.accepting);
+        const reconnect =
+          !acknowledged && host.reconnectAfterBaseline === true
+            ? SubscriptionRef.set(supervisor.session, Option.some(updateSession()))
+            : Effect.void;
         return Stream.unwrap(
           Deferred.succeed(started, undefined).pipe(Effect.andThen(events)),
-        ).pipe(Stream.concat(Stream.never));
+        ).pipe(Stream.concat(Stream.never), Stream.ensuring(reconnect));
       },
     } as unknown as WsRpcProtocolClient;
+    const updateSession = (): RpcSession => ({
+      ...session(client),
+      initialConfig: Effect.succeed(UPDATE_CONFIG),
+    });
     const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
       target: TARGET,
       state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
-      session: yield* SubscriptionRef.make(
-        Option.some<RpcSession>({
-          ...session(client),
-          initialConfig: Effect.succeed(UPDATE_CONFIG),
-        }),
-      ),
+      session: yield* SubscriptionRef.make(Option.some(updateSession())),
       prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
       connect: Effect.void,
       disconnect: Effect.void,
@@ -1399,5 +1406,84 @@ describe("launcher update resume", () => {
         expect(update.state()).toMatchObject({ status: "idle" });
       }),
     ),
+  );
+
+  it.effect(
+    "waits for this update's outcome when a reconnect lands between the baseline and the request",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const update = yield* launchUpdate({
+            reconnectAfterBaseline: true,
+            accepting: Stream.make(ACCEPTING),
+            // The process that accepted the update over the new session replays its own ready first.
+            resumed: after("1 second", ready("2026-08-01T00:01:00.000Z", "0.0.30")).pipe(
+              Stream.concat(
+                after(
+                  "1 minute",
+                  ready(
+                    "2026-08-01T00:05:00.000Z",
+                    "0.0.31",
+                    committed("update-1", "0.0.30", "0.0.31"),
+                  ),
+                ),
+              ),
+            ),
+          });
+          yield* update.resumeSubscribed;
+
+          yield* TestClock.adjust("1 second");
+          expect(update.state()).toMatchObject({ status: "running", stage: "resuming" });
+          yield* TestClock.adjust("1 minute");
+          expect(update.state()).toMatchObject({ status: "idle" });
+        }),
+      ),
+  );
+
+  it.effect("does not report another update's rollback as this update's failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const update = yield* launchUpdate({
+          accepting: Stream.make(ACCEPTING),
+          resumed: after(
+            "1 second",
+            ready("2026-08-01T00:05:00.000Z", "0.0.30", {
+              ...committed("manual-1", "0.0.30", "0.0.31"),
+              status: "rolled-back",
+              reason: "The manual update rolled back.",
+            }),
+          ),
+        });
+        yield* update.resumeSubscribed;
+
+        yield* TestClock.adjust("1 minute");
+        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
+      }),
+    ),
+  );
+
+  it.effect(
+    "sends the update without a baseline when the accepting server never replays ready",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const update = yield* launchUpdate({
+            accepting: Stream.never,
+            resumed: after(
+              "1 second",
+              ready(
+                "2026-08-01T00:05:00.000Z",
+                "0.0.31",
+                committed("update-1", "0.0.30", "0.0.31"),
+              ),
+            ),
+          });
+          yield* update.started;
+
+          yield* TestClock.adjust("5 seconds");
+          yield* TestClock.adjust("1 second");
+          expect(update.state()).toMatchObject({ status: "idle" });
+        }),
+      ),
   );
 });
