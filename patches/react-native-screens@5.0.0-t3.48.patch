@@ -1,8 +1,8 @@
 diff --git a/ios/header/RNSHeaderCoordinator.mm b/ios/header/RNSHeaderCoordinator.mm
-index 95891cd..27cca86 100644
+index 95891cd..a6d14f6 100644
 --- a/ios/header/RNSHeaderCoordinator.mm
 +++ b/ios/header/RNSHeaderCoordinator.mm
-@@ -614,7 +614,7 @@
+@@ -614,15 +614,21 @@
    UISearchController *searchController = searchBar.controller;
    if (navItem.searchController != searchController) {
      // Dismiss the old presentation before releasing or replacing its controller.
@@ -11,6 +11,22 @@ index 95891cd..27cca86 100644
      navItem.searchController = searchController;
    }
  
+   navItem.hidesSearchBarWhenScrolling = searchBar == nil || searchBar.hideWhenScrolling;
+ #if RNS_IPHONE_OS_VERSION_AVAILABLE(16_0)
+   if (@available(iOS 16.0, *)) {
+-    navItem.preferredSearchBarPlacement = searchBar == nil ? UINavigationItemSearchBarPlacementAutomatic
+-                                                           : [searchBar placementAsUINavigationItemSearchBarPlacement];
++    UINavigationItemSearchBarPlacement placement = searchBar == nil
++        ? UINavigationItemSearchBarPlacementAutomatic
++        : [searchBar placementAsUINavigationItemSearchBarPlacement];
++    if (navItem.preferredSearchBarPlacement != placement) {
++      // Moving search dismisses it; the app restores it in its new placement.
++      [RNSSearchBar deactivateSearchControllerKeepingSearch:navItem.searchController];
++    }
++    navItem.preferredSearchBarPlacement = placement;
+   }
+ #endif // RNS_IPHONE_OS_VERSION_AVAILABLE(16_0)
+ #if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
 diff --git a/ios/legacy/RNSSearchBar.h b/ios/legacy/RNSSearchBar.h
 index b97e390..04ab608 100644
 --- a/ios/legacy/RNSSearchBar.h
@@ -40,7 +56,7 @@ index b97e390..04ab608 100644
  - (UINavigationItemSearchBarPlacement)placementAsUINavigationItemSearchBarPlacement API_AVAILABLE(ios(16.0))
      API_UNAVAILABLE(tvos, watchos);
 diff --git a/ios/legacy/RNSSearchBar.mm b/ios/legacy/RNSSearchBar.mm
-index ea42020..4f3770b 100644
+index ea42020..f158c42 100644
 --- a/ios/legacy/RNSSearchBar.mm
 +++ b/ios/legacy/RNSSearchBar.mm
 @@ -109,6 +109,9 @@ static id RNSAddObserverRemovedWithSearchField(
@@ -71,7 +87,7 @@ index ea42020..4f3770b 100644
    if (_eventEmitter != nullptr) {
      std::dynamic_pointer_cast<const react::RNSSearchBarEventEmitter>(_eventEmitter)
          ->onCancelButtonPress(react::RNSSearchBarEventEmitter::OnCancelButtonPress{});
-@@ -410,6 +417,27 @@ static id RNSAddObserverRemovedWithSearchField(
+@@ -410,6 +417,30 @@ static id RNSAddObserverRemovedWithSearchField(
    [self emitOnCancelButtonPressEvent];
    [self emitOnChangeTextEventWithText:_controller.searchBar.text];
  }
@@ -91,6 +107,9 @@ index ea42020..4f3770b 100644
 +
 ++ (void)deactivateSearchControllerKeepingSearch:(UISearchController *)controller
 +{
++  if (!controller.isActive) {
++    return;
++  }
 +  if ([controller.delegate isKindOfClass:RNSSearchBar.class]) {
 +    ((RNSSearchBar *)controller.delegate)->_dismissalHandled = YES;
 +  }
@@ -99,7 +118,7 @@ index ea42020..4f3770b 100644
  #endif // !TARGET_OS_TV
  
  - (void)blur
-@@ -464,6 +492,7 @@ static id RNSAddObserverRemovedWithSearchField(
+@@ -464,6 +495,7 @@ static id RNSAddObserverRemovedWithSearchField(
  {
    if (!active) {
      _focusRequested = NO;
@@ -107,6 +126,28 @@ index ea42020..4f3770b 100644
    }
    // Search can remain expanded after the keyboard is dismissed or its host reappears.
    // Becoming first responder belongs to the separate focus command.
+diff --git a/ios/split/RNSSplitScreenController.mm b/ios/split/RNSSplitScreenController.mm
+index e16b75c..ca1deee 100644
+--- a/ios/split/RNSSplitScreenController.mm
++++ b/ios/split/RNSSplitScreenController.mm
+@@ -3,6 +3,7 @@
+ #import <React/RCTAssert.h>
+ #import "RNSHeaderCoordinator.h"
+ #import "RNSContainerItemSupport.h"
++#import "RNSSearchBar.h"
+ #import "RNSSplitHostComponentView.h"
+ #import "RNSSplitHostController.h"
+ #import "RNSSplitScreenComponentView.h"
+@@ -140,6 +141,9 @@
+ - (void)viewWillDisappear:(BOOL)animated
+ {
+   [super viewWillDisappear:animated];
++#if !TARGET_OS_TV
++  [RNSSearchBar deactivateSearchControllerKeepingSearch:self.navigationItem.searchController];
++#endif // !TARGET_OS_TV
+   [_delegate splitScreenControllerWillDisappear:self];
+ }
+ 
 diff --git a/ios/stack/screen/RNSStackScreenController.mm b/ios/stack/screen/RNSStackScreenController.mm
 index b1fbd3b..8798e77 100644
 --- a/ios/stack/screen/RNSStackScreenController.mm
