@@ -39,6 +39,92 @@ Each key under `settings` names a server setting by its path in the server's `se
 T3 Code never writes policy values into the user's own settings. If you remove the file, users get
 back the settings they had chosen.
 
+## Limits
+
+`limits` restricts what T3 Code may do. Leave a key out to keep T3 Code's normal behavior.
+
+```json
+{
+  "schemaVersion": 1,
+  "organization": "Example Corp",
+  "limits": {
+    "maxRuntimeMode": "auto-accept-edits",
+    "clients": ["desktop"],
+    "connect": false,
+    "webhookTasks": false,
+    "browserCookieImport": false,
+    "telemetry": false,
+    "providers": {
+      "allowedDrivers": ["claudeAgent", "codex"],
+      "instances": {
+        "claudeAgent": {
+          "locked": true,
+          "environment": [{ "name": "CLAUDE_CODE_USE_BEDROCK", "value": "1" }]
+        }
+      }
+    },
+    "updates": { "mode": "auto", "feedUrl": "https://updates.example.com/t3code/" }
+  }
+}
+```
+
+### Permission modes
+
+`maxRuntimeMode` is the broadest [permission mode](./permission-modes.md) any thread may use:
+`approval-required` (Supervised), `auto-accept-edits`, `auto`, or `full-access`. It applies to
+threads users start, agents start, and scheduled tasks. A thread already above it cannot run
+another turn until someone lowers its mode. A user's default above the limit starts new threads
+at the limit instead.
+
+With `maxRuntimeMode` set, each provider's launch settings belong to you: binary path, launch
+arguments, and environment variables come from `providers.instances` or T3 Code's defaults, and
+users cannot change them. Otherwise a wrapper script or a launch flag could turn off the
+provider's own approvals.
+
+### Clients and T3 Connect
+
+`clients` lists what may connect to the server:
+
+- `desktop`: the desktop app on this machine.
+- `local-browser`: a browser on this machine.
+- `remote`: phones, other computers, app.t3.codes, and anything reached over the network.
+
+Without `remote`, the server only listens on this machine, does not create pairing links, and
+signs out devices that paired earlier. T3 Connect is a way for remote clients to reach the
+machine, so it turns off too. To keep remote access but turn off only T3 Connect, set
+`"connect": false`.
+
+### Other capabilities
+
+- `webhookTasks: false`: scheduled tasks cannot use webhook triggers. Existing webhook tasks are
+  kept but do not run.
+- `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
+  browser.
+- `telemetry: false`: T3 Code sends no [product usage data](./telemetry.md) or relay connection
+  traces, whatever the environment says. A policy cannot turn them on.
+
+### Providers
+
+`providers.allowedDrivers` lists the providers that may run: `codex`, `claudeAgent`, `cursor`,
+`grok`, `opencode`, `antigravity`, `pi`, `muse`, and `acpRegistry`. Threads on other providers
+stay, marked unavailable.
+
+`providers.instances` sets fields on every instance of a provider, such as an environment
+variable that routes Claude through Amazon Bedrock or a base URL for a company gateway.
+`binaryPath` and `launchArgs` apply to providers that have those settings. With `"locked": true`
+users cannot change the fields you set; with `"locked": false` they fill only fields the user left
+empty. The policy file is readable by every user on the machine, so do not put credentials in
+it.
+
+### Updates
+
+- `mode`: `auto` keeps the normal update flow. `off` stops T3 Code from checking for updates, for
+  machines that receive T3 Code through device management.
+- `feedUrl`: the desktop app updates from your own mirror of the release feed instead of GitHub.
+  Publish only the versions you have approved. The `t3` command-line server updates through npm,
+  so pin it with your package tooling.
+- `allowNightly: false`: the nightly channel is unavailable.
+
 ## Check a policy
 
 Run `t3 policy check <file>` to validate a draft before you deploy it. Run `t3 policy show` on a
