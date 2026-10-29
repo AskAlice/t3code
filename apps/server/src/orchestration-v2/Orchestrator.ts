@@ -71,6 +71,7 @@ import {
   ThreadId,
   TurnItemId,
   TrimmedNonEmptyString,
+  managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
@@ -274,13 +275,6 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
   }
 }
 
-const runtimeModeLabels: Record<RuntimeMode, string> = {
-  "approval-required": "Supervised",
-  "auto-accept-edits": "Auto-accept edits",
-  auto: "Auto",
-  "full-access": "Full access",
-};
-
 export class OrchestratorRuntimeModeAboveCeilingError extends Schema.TaggedError<OrchestratorRuntimeModeAboveCeilingError>()(
   "OrchestratorRuntimeModeAboveCeilingError",
   {
@@ -293,7 +287,7 @@ export class OrchestratorRuntimeModeAboveCeilingError extends Schema.TaggedError
   },
 ) {
   override get message(): string {
-    const limit = `${this.organization} limits threads to ${runtimeModeLabels[this.maxRuntimeMode]}.`;
+    const limit = managedRuntimeModeCeilingMessage(this.organization, this.maxRuntimeMode);
     return this.refused === "turn" ? `${limit} Switch this thread's mode to continue.` : limit;
   }
 }

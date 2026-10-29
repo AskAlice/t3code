@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceEnvironmentVariableName } from "./providerInstance.ts";
-import { RuntimeMode } from "./providerPolicy.ts";
+import { isRuntimeModeAbove, RuntimeMode } from "./providerPolicy.ts";
 
 /**
  * One server setting an administrator manages, keyed in the policy by its dot path in the
@@ -156,4 +156,66 @@ export function isManagedSettingPath(
 /** The one shape users see when policy refuses something: "Example Corp's policy does not allow webhook tasks." */
 export function managedPolicyDeniedMessage(organization: string, capability: string): string {
   return `${organization}'s policy does not allow ${capability}.`;
+}
+
+const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
+  "approval-required": "Supervised",
+  "auto-accept-edits": "Auto-accept edits",
+  auto: "Auto",
+  "full-access": "Full access",
+};
+
+/** "Example Corp limits threads to Auto-accept edits." */
+export function managedRuntimeModeCeilingMessage(organization: string, ceiling: RuntimeMode) {
+  return `${organization} limits threads to ${RUNTIME_MODE_LABELS[ceiling]}.`;
+}
+
+/** Why `mode` is unavailable on an environment with `summary`, or undefined when it is allowed. */
+export function managedRuntimeModeDenial(
+  summary: ManagedPolicySummary | undefined,
+  mode: RuntimeMode,
+): string | undefined {
+  const ceiling = summary?.limits?.maxRuntimeMode;
+  return summary !== undefined && ceiling !== undefined && isRuntimeModeAbove(mode, ceiling)
+    ? managedRuntimeModeCeilingMessage(summary.organization, ceiling)
+    : undefined;
+}
+
+const CAPABILITY_LABELS = {
+  remoteClients: "connecting from other devices",
+  connect: "T3 Connect",
+  webhookTasks: "webhook tasks",
+  browserCookieImport: "importing browser cookies",
+} as const;
+
+/** Why a capability is unavailable on an environment with `summary`, or undefined when allowed. */
+export function managedCapabilityDenial(
+  summary: ManagedPolicySummary | undefined,
+  capability: keyof typeof CAPABILITY_LABELS,
+): string | undefined {
+  const limits = summary?.limits;
+  if (summary === undefined || limits === undefined) return undefined;
+  const denied =
+    capability === "remoteClients"
+      ? limits.clients !== undefined && !limits.clients.includes("remote")
+      : limits[capability] === false;
+  return denied
+    ? managedPolicyDeniedMessage(summary.organization, CAPABILITY_LABELS[capability])
+    : undefined;
+}
+
+/** Whether the policy lets `driver` run; clients name it with their own provider label. */
+export function isManagedDriverAllowed(
+  summary: ManagedPolicySummary | undefined,
+  driver: ProviderDriverKind,
+): boolean {
+  const allowed = summary?.limits?.providers?.allowedDrivers;
+  return allowed === undefined || allowed.includes(driver);
+}
+
+/** Why updates are unavailable on an environment with `summary`, or undefined when allowed. */
+export function managedUpdatesDenial(summary: ManagedPolicySummary | undefined) {
+  return summary?.limits?.updates?.mode === "off"
+    ? managedUpdatesMessage(summary.organization)
+    : undefined;
 }
