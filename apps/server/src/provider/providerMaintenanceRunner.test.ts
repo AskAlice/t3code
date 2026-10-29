@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -221,24 +222,22 @@ const makeTestRunner = (
     })),
   },
 ) =>
-  Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
-    Effect.provide(
-      ProviderMaintenanceRunner.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(ProviderRegistry.ProviderRegistry, registry),
-            Layer.succeed(ModelManifest.ModelManifest, {
-              current: Effect.succeed(manifest),
-              refresh: Effect.succeed(manifest),
-              forceRefresh: Effect.succeed(manifest),
-              refreshInBackground: Effect.void,
-            }),
-            ProviderLatestVersions.layer,
-          ),
+  Layer.build(
+    ProviderMaintenanceRunner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(ProviderRegistry.ProviderRegistry, registry),
+          Layer.succeed(ModelManifest.ModelManifest, {
+            current: Effect.succeed(manifest),
+            refresh: Effect.succeed(manifest),
+            forceRefresh: Effect.succeed(manifest),
+            refreshInBackground: Effect.void,
+          }),
+          ProviderLatestVersions.layer,
         ),
       ),
     ),
-  );
+  ).pipe(Effect.map(Context.get(ProviderMaintenanceRunner.ProviderMaintenanceRunner)));
 
 describe("providerMaintenanceRunner", () => {
   it.effect("runs the allowlisted provider update command and records success", () => {
@@ -572,6 +571,7 @@ describe("providerMaintenanceRunner", () => {
     () =>
       Effect.gen(function* () {
         const { registry } = yield* makeRegistry(baseProvider);
+        const firstFinished = yield* Deferred.make<void>();
         let blockQueuedState = true;
         const queuedStateWrittenLatch: { resolve: () => void } = { resolve: () => {} };
         const releaseQueuedStateLatch: { resolve: () => void } = { resolve: () => {} };
@@ -592,6 +592,9 @@ describe("providerMaintenanceRunner", () => {
               queuedStateWrittenLatch.resolve();
               yield* Effect.promise(() => releaseQueuedState);
             }
+            if (input.state?.status === "succeeded") {
+              yield* Deferred.succeed(firstFinished, undefined);
+            }
             return providers;
           }),
         });
@@ -602,6 +605,7 @@ describe("providerMaintenanceRunner", () => {
 
         yield* Fiber.interrupt(first);
         releaseQueuedStateLatch.resolve();
+        yield* Deferred.await(firstFinished);
 
         const second = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.exit);
         assert.strictEqual(Exit.isSuccess(second), true);
