@@ -169,6 +169,21 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
+  it.effect("prunes a backlog larger than one delete batch in a single pass", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      yield* Effect.forEach(Array.from({ length: 1201 }), () =>
+        sessions
+          .issue({ subject: "t3 thread cli" })
+          .pipe(Effect.flatMap(({ sessionId }) => sessions.revoke(sessionId))),
+      );
+      yield* TestClock.adjust(Duration.days(2));
+
+      expect(yield* sessions.pruneStale()).toBe(1201);
+      expect(yield* sessions.pruneStale()).toBe(0);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
     Effect.gen(function* () {
       const cookieName = (stateDir: string, environmentId: EnvironmentId) =>
