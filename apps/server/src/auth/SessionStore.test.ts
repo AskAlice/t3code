@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -15,6 +16,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -131,6 +133,40 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       yield* Fiber.join(watcher);
       yield* sessions.awaitInvalidation(client.sessionId);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("prunes sessions revoked or expired more than a day ago and keeps the rest", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const authSessions = yield* AuthSessions.AuthSessionRepository;
+      const revokedLongAgo = yield* sessions.issue({ subject: "t3 thread cli" });
+      const expiredLongAgo = yield* sessions.issue({ ...relaySessionInput, subject: "expired" });
+      const expiredButConnected = yield* sessions.issue(relaySessionInput);
+      const active = yield* sessions.issue({ subject: "active" });
+      yield* sessions.revoke(revokedLongAgo.sessionId);
+      yield* sessions.markConnected(expiredButConnected.sessionId);
+
+      yield* TestClock.adjust(Duration.days(2));
+      const recentlyRevoked = yield* sessions.issue({ subject: "t3 thread cli" });
+      yield* sessions.revoke(recentlyRevoked.sessionId);
+
+      const pruned = yield* sessions.pruneStale();
+
+      const stored = yield* Effect.all(
+        Record.map(
+          { revokedLongAgo, expiredLongAgo, expiredButConnected, active, recentlyRevoked },
+          ({ sessionId }) => authSessions.getById({ sessionId }).pipe(Effect.map(Option.isSome)),
+        ),
+      );
+      expect(stored).toEqual({
+        revokedLongAgo: false,
+        expiredLongAgo: false,
+        expiredButConnected: true,
+        active: true,
+        recentlyRevoked: true,
+      });
+      expect(pruned).toBe(2);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
