@@ -1,7 +1,7 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { Toolbar } from "../../components/ui/Toolbar";
-import { useFocusEffect, useIsFocused } from "@react-navigation/native";
-import { use, useCallback, useEffect, useRef } from "react";
+import { useIsFocused } from "@react-navigation/native";
+import { use, useCallback, useEffect, useEffectEvent, useRef } from "react";
 import { Platform } from "react-native";
 import { isDuoDevice } from "../../lib/device-type";
 import { useDeviceType } from "../../native/native-layout-metrics";
@@ -104,19 +104,15 @@ export function WorkspaceToolbar(props: {
       }
     }
   };
-  useFocusEffect(
-    useCallback(() => {
-      const frame = requestAnimationFrame(restoreSearch);
-      return () => cancelAnimationFrame(frame);
-    }, [restoreSearch]),
-  );
+  // Only when search reappears: re-activating it after a blur would reopen it while UIKit closes it.
+  const restoreShownSearch = useEffectEvent(restoreSearch);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to restore the native search bar's text and focus when its tab becomes active
   useEffect(() => {
     if (!tabActive) return;
-    const frame = requestAnimationFrame(restoreSearch);
+    const frame = requestAnimationFrame(restoreShownSearch);
     return () => cancelAnimationFrame(frame);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Moving the search bar to the bottom toolbar restores its focus and query.
-  }, [restoreSearch, tabActive, bottomSearch]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each dependency shows or moves the search bar, which needs its focus and query restored.
+  }, [tabActive, focused, bottomSearch, selectedTab, searchVisible, searchHostVisible]);
   const composeButton = nativeToolbarCompose ? (
     <Toolbar.Button
       identifier="workspace-compose"

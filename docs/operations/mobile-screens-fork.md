@@ -2,7 +2,9 @@
 
 The mobile v5 stack uses a committed tarball from the
 [T3 Screens fork](https://github.com/pingdotgg/react-native-screens/tree/t3-v5.0.0-t3.45).
-The fork owns the integration changes; the app does not patch this package.
+The fork owns the integration changes. A fix waiting for the next archive may
+ride as a `patches/react-native-screens@<version>.patch` entry in
+`pnpm-workspace.yaml`; move it into the fork and delete it when bumping the archive.
 Each archive includes compiled JavaScript, declarations, native source and
 `t3-fork.json` recording its version, source commit and upstream base.
 
