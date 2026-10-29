@@ -6,23 +6,29 @@ import {
   UsageLimitSourceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  type ServerLifecycleStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ServerSelfUpdateOutcome,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 
@@ -31,12 +37,14 @@ import {
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerWelcomeEvent,
+  createServerEnvironmentAtoms,
   makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
@@ -49,6 +57,7 @@ import {
   resolveServerWelcomeState,
   resolveServerUpdateProgressResult,
   serverUpdateStateForProgressEvent,
+  serverUpdateStateAtom,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
   waitForNextEnvironmentReconnect,
@@ -1144,5 +1153,163 @@ describe("server state projection", () => {
       // Cached, it would read as a fresh freeze on the next launch.
       expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
     }),
+  );
+});
+
+describe("launcher update resume", () => {
+  const UPDATE_CONFIG = {
+    ...CONFIG,
+    environment: { serverVersion: "0.0.30", capabilities: { serverSelfUpdateProgress: true } },
+  } as unknown as ServerConfig;
+
+  const ready = (at: string, serverVersion: string, updateOutcome?: ServerSelfUpdateOutcome) =>
+    ({
+      version: 1,
+      sequence: 1,
+      type: "ready",
+      payload: { at, environment: { serverVersion }, ...(updateOutcome ? { updateOutcome } : {}) },
+    }) as ServerLifecycleStreamEvent;
+
+  // The old process's replayed ready arrives first; the restarted host's ready a minute later.
+  const runLauncherUpdate = Effect.fn("ServerUpdateTest.runLauncherUpdate")(function* (
+    oldProcessReplay: ServerLifecycleStreamEvent,
+    newProcessReady: ServerLifecycleStreamEvent,
+  ) {
+    const subscribed = yield* Deferred.make<void>();
+    const client = {
+      [WS_METHODS.subscribeServerConfig]: () => Stream.never,
+      [WS_METHODS.serverUpdateServerWithProgress]: () =>
+        Stream.make({
+          type: "complete" as const,
+          result: {
+            targetVersion: "0.0.31",
+            method: "boot-service" as const,
+            updateId: "update-1",
+          },
+        }),
+      [WS_METHODS.subscribeServerLifecycle]: () =>
+        Stream.fromEffect(
+          Deferred.succeed(subscribed, undefined).pipe(
+            Effect.andThen(Effect.sleep("1 second")),
+            Effect.as(oldProcessReplay),
+          ),
+        ).pipe(
+          Stream.concat(Stream.fromEffect(Effect.as(Effect.sleep("1 minute"), newProcessReady))),
+          Stream.concat(Stream.never),
+        ),
+    } as unknown as WsRpcProtocolClient;
+    const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+      target: TARGET,
+      state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+      session: yield* SubscriptionRef.make(
+        Option.some<RpcSession>({
+          ...session(client),
+          initialConfig: Effect.succeed(UPDATE_CONFIG),
+        }),
+      ),
+      prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+      connect: Effect.void,
+      disconnect: Effect.void,
+      retryNow: Effect.void,
+    } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+    type Environments = EnvironmentRegistry.EnvironmentRegistry["Service"];
+    const run: Environments["run"] = (_environmentId, effect) =>
+      Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+    const runStream: Environments["runStream"] = (_environmentId, stream) =>
+      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+    const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+      run,
+      runStream,
+      followStream: runStream,
+      stateChanges: () => Stream.never,
+      retryNow: () => Effect.void,
+    } as unknown as Environments);
+    const cache = Persistence.EnvironmentCacheStore.of({
+      loadShell: () => Effect.succeedNone,
+      saveShell: () => Effect.void,
+      loadThread: () => Effect.succeedNone,
+      saveThread: () => Effect.void,
+      removeThread: () => Effect.void,
+      loadServerConfig: () => Effect.succeedNone,
+      saveServerConfig: () => Effect.void,
+      loadVcsRefs: () => Effect.succeedNone,
+      saveVcsRefs: () => Effect.void,
+      removeVcsRefs: () => Effect.void,
+      clearVcsRefs: () => Effect.void,
+      clear: () => Effect.void,
+    });
+    // Share the test clock so the command's timers and the host's restart run on TestClock.
+    const runtime = Atom.runtime(
+      Layer.mergeAll(
+        Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
+        Layer.succeed(Persistence.EnvironmentCacheStore, cache),
+        Layer.succeed(Clock.Clock, yield* Clock.Clock),
+        Layer.succeed(Scheduler.Scheduler, yield* Scheduler.Scheduler),
+      ),
+    );
+    const initialConfigValueAtom = Atom.make(UPDATE_CONFIG);
+    const atoms = createServerEnvironmentAtoms(runtime, {
+      initialConfigValueAtom: () => initialConfigValueAtom,
+    });
+    const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+      Effect.sync(() => registry.dispose()),
+    );
+    const updateStateAtom = serverUpdateStateAtom(TARGET.environmentId);
+    yield* AtomRegistry.mount(registry, updateStateAtom);
+    const updateState = () => registry.get(updateStateAtom);
+
+    yield* Effect.promise(() =>
+      atoms.updateServer.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { targetVersion: "0.0.31" },
+      }),
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.await(subscribed);
+    yield* TestClock.adjust("1 second");
+    const afterOldReplay = updateState();
+    yield* TestClock.adjust("1 minute");
+    return { afterOldReplay, afterNewProcess: updateState() };
+  });
+
+  const UNCOMMITTED_RESUME = {
+    status: "failed",
+    stage: "resuming",
+    fromVersion: "0.0.30",
+    targetVersion: "0.0.31",
+    message: "The service launcher resumed without committing the requested server version.",
+  };
+
+  it.effect("fails promptly when a server the launcher did not start comes back", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { afterOldReplay, afterNewProcess } = yield* runLauncherUpdate(
+          ready("2026-08-01T00:00:00.000Z", "0.0.30"),
+          ready("2026-08-01T00:05:00.000Z", "0.0.31"),
+        );
+
+        expect(afterOldReplay).toMatchObject({ status: "running", stage: "resuming" });
+        expect(afterNewProcess).toEqual(UNCOMMITTED_RESUME);
+      }),
+    ),
+  );
+
+  it.effect("fails promptly when the restarted server reports another update's outcome", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const outcome = (id: string, fromVersion: string, targetVersion: string) => ({
+          id,
+          fromVersion,
+          targetVersion,
+          status: "committed" as const,
+        });
+        const { afterOldReplay, afterNewProcess } = yield* runLauncherUpdate(
+          ready("2026-08-01T00:00:00.000Z", "0.0.30", outcome("update-0", "0.0.29", "0.0.30")),
+          ready("2026-08-01T00:05:00.000Z", "0.0.31", outcome("manual-1", "0.0.30", "0.0.31")),
+        );
+
+        expect(afterOldReplay).toMatchObject({ status: "running", stage: "resuming" });
+        expect(afterNewProcess).toEqual(UNCOMMITTED_RESUME);
+      }),
+    ),
   );
 });
