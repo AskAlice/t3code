@@ -1116,6 +1116,7 @@ export const make = Effect.gen(function* () {
     );
     const raw: Array<RawCandidate> = [];
     let truncated = false;
+    let metadataTruncated = false;
 
     for (const source of ["claudeAgent", "codex"] as const) {
       const instances: Array<{
@@ -1218,10 +1219,10 @@ export const make = Effect.gen(function* () {
           importedByFile,
         )),
       );
-      truncated ||= metadataBudget.truncated;
+      metadataTruncated ||= metadataBudget.truncated;
     }
 
-    return { candidates: raw, truncated };
+    return { candidates: raw, truncated: truncated || metadataTruncated, metadataTruncated };
   });
 
   let cachedCandidates: Effect.Success<ReturnType<typeof collectCandidates>> | null = null;
@@ -1356,8 +1357,8 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
 
-    // Imports recorded since a truncated collection can free budget for transcripts it cut off.
-    if (cachedCandidates === null || cachedCandidates.truncated) {
+    // Imports recorded since a budget-truncated collection can free budget for transcripts it cut off.
+    if (cachedCandidates === null || cachedCandidates.metadataTruncated) {
       cachedCandidates = yield* collectCandidates();
     }
     const { candidates } = cachedCandidates;
