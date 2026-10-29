@@ -1,5 +1,10 @@
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
-import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  managedUpdatesDenial,
+  managedUpdatesMessage,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
 
 import {
@@ -15,6 +20,7 @@ export interface UpdateEverythingMachine {
   readonly serverConfig: {
     readonly environment: ServerConfig["environment"];
     readonly settings: Pick<ServerConfig["settings"], "continueThreadsAfterServerUpdate">;
+    readonly managedPolicy?: ServerConfig["managedPolicy"];
   } | null;
   readonly connected: boolean;
   readonly hostedByThisApp: boolean;
@@ -86,6 +92,19 @@ export function collectServerUpdateTargets(
     }
     if (machine.updateState.status === "running") {
       skip("already updating");
+      continue;
+    }
+    // The server refuses these with the same message; say so before the run instead of after.
+    const policy = config.managedPolicy;
+    const managedDenial =
+      managedUpdatesDenial(policy) ??
+      (policy !== undefined &&
+      policy.limits?.updates?.allowNightly === false &&
+      cliReleaseChannelOf(targetVersion) !== "stable"
+        ? managedUpdatesMessage(policy.organization)
+        : undefined);
+    if (managedDenial !== undefined) {
+      skip(managedDenial);
       continue;
     }
     const selfUpdate = resolveServerSelfUpdateCapability(config);

@@ -79,6 +79,45 @@ describe("collectServerUpdateTargets", () => {
       ["manual", "needs a manual update"],
     ]);
   });
+
+  it("skips servers whose policy refuses the update, with the policy's message", () => {
+    const managed = (
+      id: string,
+      updates: { mode: "off" } | { mode: "auto"; allowNightly: false },
+    ) => {
+      const base = machine(id, "0.0.40", "boot-service");
+      return {
+        ...base,
+        serverConfig: {
+          ...base.serverConfig!,
+          managedPolicy: { organization: "Example Corp", lockedSettings: [], limits: { updates } },
+        },
+      };
+    };
+    const machines = [
+      managed("off", { mode: "off" }),
+      managed("no-nightly", { mode: "auto", allowNightly: false }),
+    ];
+
+    expect(
+      collectServerUpdateTargets(machines, "0.0.50").skipped.map((entry) => [
+        entry.label,
+        entry.reason,
+      ]),
+    ).toEqual([["off", "Example Corp manages T3 Code updates."]]);
+    expect(
+      collectServerUpdateTargets(
+        machines.map((entry) => ({
+          ...entry,
+          serverConfig: {
+            ...entry.serverConfig,
+            environment: { ...entry.serverConfig.environment, serverVersion: "0.0.49-nightly.1" },
+          },
+        })),
+        "0.0.50-nightly.20261028.1",
+      ).skipped.map((entry) => entry.label),
+    ).toEqual(["off", "no-nightly"]);
+  });
 });
 
 describe("collectRestartingMachines", () => {
