@@ -11061,6 +11061,85 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("shows forwarded subagent thinking in the child thread only", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "task-thinking-subagent";
+        const TOOL_USE_ID = "toolu-thinking-subagent";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-thinking-subagent"),
+            text: "Run an auditor.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000331",
+          }),
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_thinking_subagent",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "thinking", thinking: "Check the diffs.", signature: "sig" }],
+            },
+            parent_tool_use_id: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000332",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          ...makeSubagentAssistantFrames({
+            parentToolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000333",
+            messageId: "msg_thinking_subagent",
+            text: "Diffs look fine.",
+          }),
+          makeSubagentNotificationFrame({
+            taskId: TASK_ID,
+            toolUseId: TOOL_USE_ID,
+            summary: "Diffs look fine.",
+            uuid: "00000000-0000-4000-8000-000000000334",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000335",
+            result: "The auditor finished.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+
+        const routing = subagentRouting(harness.events, []);
+        const reasoning = (threadId: string | undefined) =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "reasoning" &&
+            event.turnItem.threadId === threadId
+              ? [event.turnItem.text]
+              : [],
+          );
+        assert.isDefined(routing.childThreadId);
+        assert.deepEqual(reasoning(routing.childThreadId), ["Check the diffs."]);
+        assert.deepEqual(reasoning(harness.threadId), []);
+        assert.deepEqual(routing.assistantTexts(routing.childThreadId), ["Diffs look fine."]);
+        assert.deepEqual(routing.assistantTexts(harness.threadId), ["The auditor finished."]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([false, true])(
     "drops an idle start superseded by live completion, later resume %s",
     (resume) =>
