@@ -1058,6 +1058,9 @@ const make = Effect.gen(function* () {
       const pruned = yield* authSessions.deleteStale({
         cutoff: DateTime.subtractDuration(now, STALE_SESSION_RETENTION),
         excludeSessionIds: Array.from(connectedSessions.keys()),
+        // A reusable dev session is recreated from its configured token on startup, so its
+        // revoked row is the only thing keeping that token revoked.
+        keepSessionIdPrefix: REUSABLE_DEV_SESSION_PREFIX,
       });
       yield* Effect.annotateCurrentSpan({ "auth_sessions.pruned": pruned });
       return pruned;

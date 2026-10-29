@@ -95,6 +95,7 @@ export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnec
 export const DeleteStaleAuthSessionsInput = Schema.Struct({
   cutoff: Schema.DateTimeUtcFromString,
   excludeSessionIds: Schema.Array(AuthSessionId),
+  keepSessionIdPrefix: Schema.String,
 });
 export type DeleteStaleAuthSessionsInput = typeof DeleteStaleAuthSessionsInput.Type;
 
@@ -362,7 +363,7 @@ export const make = Effect.gen(function* () {
   const deleteStaleSessionRows = SqlSchema.findAll({
     Request: DeleteStaleAuthSessionsInput,
     Result: Schema.Struct({ sessionId: Schema.String }),
-    execute: ({ cutoff, excludeSessionIds }) =>
+    execute: ({ cutoff, excludeSessionIds, keepSessionIdPrefix }) =>
       sql`
         DELETE FROM auth_sessions
         WHERE session_id IN (
@@ -373,6 +374,7 @@ export const make = Effect.gen(function* () {
               OR (revoked_at IS NULL AND expires_at < ${cutoff})
             )
             AND NOT (${sql.in("session_id", excludeSessionIds)})
+            AND substr(session_id, 1, length(${keepSessionIdPrefix})) <> ${keepSessionIdPrefix}
           LIMIT ${DELETE_STALE_BATCH_SIZE}
         )
         RETURNING session_id AS "sessionId"

@@ -236,6 +236,27 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }),
   );
 
+  it.effect("keeps a revoked reusable dev credential revoked after pruning and restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const token = "pruned-reusable-dev-auth-token-that-is-long-enough";
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dev-auth-prune-" });
+      const layerInitial = yield* makeDiskSessionStoreLayer(baseDir, token);
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        yield* sessions.revoke((yield* sessions.verify(token)).sessionId);
+        yield* TestClock.adjust(Duration.days(2));
+        yield* sessions.pruneStale();
+      }).pipe(Effect.provide(Layer.merge(layerInitial, TestClock.layer())), Effect.scoped);
+
+      const layerReopened = yield* makeDiskSessionStoreLayer(baseDir, token);
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
+      }).pipe(Effect.provide(layerReopened), Effect.scoped);
+    }),
+  );
+
   it.effect("invalidates old dev credentials and tickets after rotation or removal", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
