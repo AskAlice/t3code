@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { createWorkspaceFocusController } from "./workspaceFocus";
 
 function setup() {
@@ -29,6 +30,17 @@ function setup() {
       root.remove();
     },
   };
+}
+
+function conversationWithTimeline(fixture: ReturnType<typeof setup>) {
+  const conversation = fixture.area("conversation", 1);
+  conversation.button.remove();
+  const timeline = document.createElement("div");
+  timeline.style.cssText = "height: 200px; overflow-y: auto";
+  timeline.append(Object.assign(document.createElement("div"), { style: "height: 2000px" }));
+  conversation.element.append(timeline);
+  const composer = fixture.area("composer", 2);
+  return { timeline, composer };
 }
 
 describe("workspace area focus", () => {
@@ -204,6 +216,23 @@ describe("workspace area focus", () => {
     fixture.controller.move(-1);
     expect(document.activeElement).toBe(conversation.element);
     expect(timeline.scrollTop).toBe(300);
+  });
+
+  it("scrolls the conversation with the keyboard after F6 moves into it", async () => {
+    using fixture = setup();
+    const { timeline, composer } = conversationWithTimeline(fixture);
+    composer.button.focus();
+    fixture.controller.move(-1);
+    await userEvent.keyboard("{ArrowDown}{PageDown}");
+    await vi.waitFor(() => expect(timeline.scrollTop).toBeGreaterThan(0));
+  });
+
+  it("scrolls the conversation with the keyboard after clicking inside it", async () => {
+    using fixture = setup();
+    const { timeline } = conversationWithTimeline(fixture);
+    await userEvent.click(timeline);
+    await userEvent.keyboard("{ArrowDown}{PageDown}");
+    await vi.waitFor(() => expect(timeline.scrollTop).toBeGreaterThan(0));
   });
 
   it("returns focus to the area when its focused control disappears", async () => {
