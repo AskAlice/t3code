@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -616,6 +617,75 @@ describe("providerMaintenanceRunner", () => {
           ),
         ),
       ),
+  );
+
+  it.effect(
+    "keeps the update command running and records its result when the caller is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const kills: Array<string> = [];
+        const spawned = yield* Deferred.make<void>();
+        const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const finished = yield* Deferred.make<ServerProviderUpdateState>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Deferred.succeed(spawned, undefined).pipe(
+            Effect.as(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Deferred.await(exit),
+                isRunning: Effect.succeed(true),
+                kill: () => Effect.sync(() => kills.push("kill")),
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.make(encoder.encode("added 1 package")),
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            ),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const { registry } = yield* makeRegistry(baseOpenCodeProvider);
+          const updater = yield* makeTestRunner({
+            ...registry,
+            setProviderMaintenanceActionState: Effect.fn(
+              "providerMaintenanceRunner.test.recordFinishedState",
+            )(function* (input) {
+              const providers = yield* registry.setProviderMaintenanceActionState(input);
+              const status = input.state?.status;
+              if (input.state && status !== "queued" && status !== "running") {
+                yield* Deferred.succeed(finished, input.state);
+              }
+              return providers;
+            }),
+          });
+
+          const caller = yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkChild);
+          yield* Deferred.await(spawned);
+          yield* Fiber.interrupt(caller);
+
+          assert.deepStrictEqual(
+            kills,
+            [],
+            "interrupting the updateProvider caller killed the running npm install",
+          );
+
+          yield* Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0));
+          const finalState = yield* Deferred.await(finished);
+          assert.strictEqual(finalState.status, "succeeded");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layerNonWindowsPlatform,
+              layerLatestVersionHttpClient("0.0.0"),
+              Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            ),
+          ),
+        );
+      }),
   );
 
   it.effect("resolves npm to a .cmd shim and routes through the shell on win32", () => {
