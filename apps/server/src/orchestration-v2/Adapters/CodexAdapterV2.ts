@@ -545,6 +545,17 @@ function nonEmptyText(value: string | null | undefined, fallback: string): strin
   return trimText(value) ?? fallback;
 }
 
+function codexHookStopMessage(run: CodexSchema.V2HookCompletedNotification__HookRunSummary) {
+  const eventName = `${run.eventName.charAt(0).toUpperCase()}${run.eventName.slice(1)}`;
+  const reason =
+    run.entries
+      .flatMap((entry) => (entry.kind === "stop" ? (trimText(entry.text) ?? []) : []))
+      .join("\n") || trimText(run.statusMessage);
+  return reason === undefined
+    ? `${eventName} hook stopped the turn.`
+    : `${eventName} hook stopped the turn: ${reason}`;
+}
+
 function codexPlanStepStatus(
   status: CodexSchema.V2TurnPlanUpdatedNotification__TurnPlanStepStatus,
 ): OrchestrationV2PlanStep["status"] {
@@ -4569,6 +4580,46 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               type: "turn_item.updated",
               driver: CODEX_PROVIDER,
               turnItem: codexRetryTurnItem(context, state, "running", updatedAt),
+            });
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerNotification("hook/completed", (payload) =>
+          Effect.gen(function* () {
+            if (payload.run.status !== "stopped" || !payload.turnId) {
+              return;
+            }
+            const context = yield* awaitActiveTurn(payload.turnId);
+            if (context === undefined) {
+              return;
+            }
+            const nativeItemId = `hook:${payload.turnId}:${payload.run.id}`;
+            const { ordinal, startedAt } = yield* resolveItemPosition(context, nativeItemId);
+            const message = codexHookStopMessage(payload.run);
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CODEX_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.projectionThreadId,
+                runId: context.projectionRunId,
+                nodeId: context.providerNodeId,
+                providerThreadId: context.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: codexNativeItemRef(nativeItemId),
+                parentItemId: null,
+                ordinal,
+                type: "system_notice",
+                status: "completed",
+                title: message,
+                message,
+                startedAt,
+                completedAt: startedAt,
+                updatedAt: startedAt,
+              },
             });
           }).pipe(Effect.orDie),
         );
