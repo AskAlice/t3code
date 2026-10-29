@@ -567,7 +567,7 @@ describe("providerMaintenanceRunner", () => {
   });
 
   it.effect(
-    "releases the running-provider marker when interrupted after queuing but before the lock run starts",
+    "finishes a queued update whose caller is interrupted, then frees the running-provider marker",
     () =>
       Effect.gen(function* () {
         const { registry } = yield* makeRegistry(baseProvider);
