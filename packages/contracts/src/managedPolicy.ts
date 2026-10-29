@@ -18,7 +18,10 @@ export type ManagedPolicySetting = typeof ManagedPolicySetting.Type;
 export const ManagedPolicyClient = Schema.Literals(["desktop", "local-browser", "remote"]);
 export type ManagedPolicyClient = typeof ManagedPolicyClient.Type;
 
-/** Restrictions that are not settings: users cannot opt out of them anywhere. */
+/**
+ * Restrictions that are not settings: users cannot opt out of them anywhere. For the boolean
+ * capabilities, omitted means allowed and only `false` restricts.
+ */
 export const ManagedPolicyLimits = Schema.Struct({
   /** The broadest runtime mode any thread may be created in, switched to, or run turns in. */
   maxRuntimeMode: Schema.optionalKey(RuntimeMode),
@@ -26,6 +29,10 @@ export const ManagedPolicyLimits = Schema.Struct({
   clients: Schema.optionalKey(Schema.NonEmptyArray(ManagedPolicyClient)),
   /** `false` turns T3 Connect off and unlinks this machine. */
   connect: Schema.optionalKey(Schema.Boolean),
+  webhookTasks: Schema.optionalKey(Schema.Boolean),
+  /** Can only turn product analytics off, never force it on. */
+  telemetry: Schema.optionalKey(Schema.Boolean),
+  browserCookieImport: Schema.optionalKey(Schema.Boolean),
 });
 export type ManagedPolicyLimits = typeof ManagedPolicyLimits.Type;
 
@@ -35,6 +42,9 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
   clients: Schema.optionalKey(Schema.NonEmptyArray(ManagedPolicyClient)),
   /** `false` also when `clients` leaves out `remote`, since Connect is remote access. */
   connect: Schema.optionalKey(Schema.Boolean),
+  webhookTasks: Schema.optionalKey(Schema.Boolean),
+  telemetry: Schema.optionalKey(Schema.Boolean),
+  browserCookieImport: Schema.optionalKey(Schema.Boolean),
 });
 export type ManagedPolicySummaryLimits = typeof ManagedPolicySummaryLimits.Type;
 
@@ -73,4 +83,9 @@ export function isManagedSettingPath(
   return summary.lockedSettings.some(
     (locked) => locked === path || locked.startsWith(`${path}.`) || path.startsWith(`${locked}.`),
   );
+}
+
+/** The one shape users see when policy refuses something: "Example Corp's policy does not allow webhook tasks." */
+export function managedPolicyDeniedMessage(organization: string, capability: string): string {
+  return `${organization}'s policy does not allow ${capability}.`;
 }

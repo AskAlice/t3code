@@ -34,6 +34,19 @@ export class ManagedPolicy extends Context.Service<
   }
 >()("t3/policy/ManagedPolicy") {}
 
+type LimitsSummary = NonNullable<ManagedPolicySummary["limits"]>;
+
+/**
+ * The organization whose policy switches `capability` off, or undefined when it is allowed.
+ * Only an explicit `false` restricts.
+ */
+export function deniedBy(
+  policy: Pick<ManagedPolicy["Service"], "document">,
+  capability: "webhookTasks" | "telemetry" | "browserCookieImport",
+): string | undefined {
+  return policy.document?.limits?.[capability] === false ? policy.document.organization : undefined;
+}
+
 /** Build the service from a decoded document; fails when the document cannot be enforced. */
 export const fromDocument = Effect.fn("ManagedPolicy.fromDocument")(function* (
   path: string,
@@ -65,14 +78,18 @@ export const fromDocument = Effect.fn("ManagedPolicy.fromDocument")(function* (
   });
 });
 
-function summarizeLimits(document: ManagedPolicyDocument) {
-  const clients = document.limits?.clients;
+// Copies only what clients may see; other limits can carry values that stay on the server.
+function summarizeLimits(document: ManagedPolicyDocument): LimitsSummary {
+  const { maxRuntimeMode, clients, webhookTasks, telemetry, browserCookieImport } =
+    document.limits ?? {};
   const connect = ManagedLimits.allowsConnect({ document });
-  const maxRuntimeMode = document.limits?.maxRuntimeMode;
   return {
     ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
     ...(clients === undefined ? {} : { clients }),
     ...(connect ? {} : { connect: false }),
+    ...(webhookTasks === undefined ? {} : { webhookTasks }),
+    ...(telemetry === undefined ? {} : { telemetry }),
+    ...(browserCookieImport === undefined ? {} : { browserCookieImport }),
   };
 }
 

@@ -108,8 +108,40 @@ describe("BrowserImport.importCookies", () => {
           })
           .pipe(Effect.flip);
 
+        assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
         assert.equal(error.reason, "browserRunning");
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("BrowserImport.checkBrowserImportPolicy", () => {
+  it.effect("allows imports unless a readable policy turns them off, and fails closed", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-import-policy-" });
+      const outcome = (contents: string | undefined) =>
+        Effect.gen(function* () {
+          const policyPath = `${dir}/policy.json`;
+          yield* fileSystem.remove(policyPath, { force: true });
+          if (contents !== undefined) yield* fileSystem.writeFileString(policyPath, contents);
+          return yield* BrowserImport.checkBrowserImportPolicy(policyPath).pipe(
+            Effect.match({ onFailure: (error) => error.message, onSuccess: () => "allowed" }),
+          );
+        });
+      const policy = (limits?: object) =>
+        JSON.stringify({ schemaVersion: 1, organization: "Example Corp", limits });
+
+      assert.equal(yield* outcome(undefined), "allowed");
+      assert.equal(yield* outcome(policy()), "allowed");
+      assert.equal(yield* outcome(policy({ browserCookieImport: true })), "allowed");
+      assert.equal(
+        yield* outcome(policy({ browserCookieImport: false })),
+        "Example Corp's policy does not allow importing browser cookies.",
+      );
+      for (const unreadable of ["{ not json", policy({ notALimit: false })]) {
+        assert.include(yield* outcome(unreadable), "could not be read");
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

@@ -45,6 +45,22 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
     }),
   );
 
+  it.effect("tells clients which capabilities the policy switches off", () =>
+    Effect.gen(function* () {
+      const policy = yield* loadFrom(
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { webhookTasks: false, telemetry: true },
+        }),
+      );
+      assert.deepEqual(policy.summary?.limits, { webhookTasks: false, telemetry: true });
+      assert.equal(ManagedPolicy.deniedBy(policy, "webhookTasks"), "Example Corp");
+      assert.isUndefined(ManagedPolicy.deniedBy(policy, "telemetry"));
+      assert.isUndefined(ManagedPolicy.deniedBy(policy, "browserCookieImport"));
+    }),
+  );
+
   it.effect("refuses files it cannot fully enforce", () =>
     Effect.gen(function* () {
       const base = { schemaVersion: 1, organization: "Example Corp" };
