@@ -114,11 +114,10 @@ export function PullRequestsScreen(
     const restoringSearch =
       previousSearchMode.current !== "resting" && tab.searchMode === "resting";
     previousSearchMode.current = tab.searchMode;
-    if (restoringSearch)
-      void listRef.current?.scrollToOffset({
-        offset: tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0),
-        animated: false,
-      });
+    const offset = tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0);
+    // Like Home: React Native clamps a scroll above 0, which would tuck the list under the header.
+    if (restoringSearch && offset >= 0)
+      void listRef.current?.scrollToOffset({ offset, animated: false });
   }, [tab.searchMode, tab.scrollOffset, insets.top]);
   const maintainVisiblePosition = {
     data: tab.searchMode === "resting",

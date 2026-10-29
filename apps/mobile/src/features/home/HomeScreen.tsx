@@ -319,10 +319,11 @@ export function HomeScreen(props: HomeScreenProps) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the thread list's saved scroll offset through the list ref when search goes back to resting
   useEffect(() => {
     if (searchMode !== "resting" || restoredOffset === undefined) return;
-    listRef.current?.scrollToOffset({
-      offset: restoredOffset - (Platform.OS === "ios" ? insets.top : 0),
-      animated: false,
-    });
+    const offset = restoredOffset - (Platform.OS === "ios" ? insets.top : 0);
+    // React Native clamps a scroll above 0 to 0, which would leave the header covering the
+    // filters; a negative target means search opened at the top, where the list still is.
+    if (offset < 0) return;
+    listRef.current?.scrollToOffset({ offset, animated: false });
   }, [searchMode, insets.top, restoredOffset]);
   const swipeRowActivation = createSwipeRowActivation();
   const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
