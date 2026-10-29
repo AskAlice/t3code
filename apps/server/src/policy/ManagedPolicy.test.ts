@@ -52,7 +52,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
         [
           "{ not json",
           // An unknown key may be a restriction from a newer release.
-          JSON.stringify({ ...base, limits: { connect: false } }),
+          JSON.stringify({ ...base, limits: { connect: false, futureLimit: true } }),
           JSON.stringify({ ...base, settings: { notASetting: { value: 1, locked: true } } }),
           JSON.stringify({
             ...base,

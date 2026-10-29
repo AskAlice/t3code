@@ -19,6 +19,7 @@ import {
 } from "@t3tools/shared/managedPolicyFile";
 
 import { telemetryChannel } from "../config.ts";
+import * as ManagedLimits from "./managedLimits.ts";
 import * as ManagedSettings from "./managedSettings.ts";
 
 export class ManagedPolicy extends Context.Service<
@@ -59,10 +60,21 @@ export const fromDocument = Effect.fn("ManagedPolicy.fromDocument")(function* (
       organization: document.organization,
       ...(document.supportUrl === undefined ? {} : { supportUrl: document.supportUrl }),
       lockedSettings: settings.settings.lockedPaths,
-      ...(maxRuntimeMode === undefined ? {} : { limits: { maxRuntimeMode } }),
+      ...(document.limits === undefined ? {} : { limits: summarizeLimits(document) }),
     },
   });
 });
+
+function summarizeLimits(document: ManagedPolicyDocument) {
+  const clients = document.limits?.clients;
+  const connect = ManagedLimits.allowsConnect({ document });
+  const maxRuntimeMode = document.limits?.maxRuntimeMode;
+  return {
+    ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
+    ...(clients === undefined ? {} : { clients }),
+    ...(connect ? {} : { connect: false }),
+  };
+}
 
 /** Read and validate the policy at `path`; a missing file means no policy. */
 export const load = Effect.fn("ManagedPolicy.load")(function* (path: string) {

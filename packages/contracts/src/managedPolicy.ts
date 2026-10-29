@@ -14,12 +14,29 @@ export const ManagedPolicySetting = Schema.Struct({
 });
 export type ManagedPolicySetting = typeof ManagedPolicySetting.Type;
 
+/** A kind of client the server may accept, mapped onto `ServerAuthPolicy`. */
+export const ManagedPolicyClient = Schema.Literals(["desktop", "local-browser", "remote"]);
+export type ManagedPolicyClient = typeof ManagedPolicyClient.Type;
+
 /** Restrictions that are not settings: users cannot opt out of them anywhere. */
 export const ManagedPolicyLimits = Schema.Struct({
   /** The broadest runtime mode any thread may be created in, switched to, or run turns in. */
   maxRuntimeMode: Schema.optionalKey(RuntimeMode),
+  /** Clients the server accepts. Without `remote`, nothing off this machine can pair. */
+  clients: Schema.optionalKey(Schema.NonEmptyArray(ManagedPolicyClient)),
+  /** `false` turns T3 Connect off and unlinks this machine. */
+  connect: Schema.optionalKey(Schema.Boolean),
 });
 export type ManagedPolicyLimits = typeof ManagedPolicyLimits.Type;
+
+/** The limits clients see: what the server enforces, which can be broader than the file says. */
+export const ManagedPolicySummaryLimits = Schema.Struct({
+  maxRuntimeMode: Schema.optionalKey(RuntimeMode),
+  clients: Schema.optionalKey(Schema.NonEmptyArray(ManagedPolicyClient)),
+  /** `false` also when `clients` leaves out `remote`, since Connect is remote access. */
+  connect: Schema.optionalKey(Schema.Boolean),
+});
+export type ManagedPolicySummaryLimits = typeof ManagedPolicySummaryLimits.Type;
 
 /**
  * The machine-wide policy file an administrator deploys. Decoded with excess properties
@@ -42,7 +59,8 @@ export const ManagedPolicySummary = Schema.Struct({
   supportUrl: Schema.optionalKey(TrimmedNonEmptyString),
   /** Dot paths into `ServerSettings` that users cannot change. */
   lockedSettings: Schema.Array(Schema.String),
-  limits: Schema.optionalKey(ManagedPolicyLimits),
+  /** What the server enforces; a missing key means no limit. */
+  limits: Schema.optionalKey(ManagedPolicySummaryLimits),
 });
 export type ManagedPolicySummary = typeof ManagedPolicySummary.Type;
 
