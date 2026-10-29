@@ -37,7 +37,7 @@ export const unmanagedUpdatePolicy: UpdatePolicy = {
   message: null,
 };
 
-export function resolveUpdatePolicy(document: ManagedPolicyDocument | undefined): UpdatePolicy {
+function resolveUpdatePolicy(document: ManagedPolicyDocument | undefined): UpdatePolicy {
   const updates = document?.limits?.updates;
   if (document === undefined || updates === undefined) return unmanagedUpdatePolicy;
   return {

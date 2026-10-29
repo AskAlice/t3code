@@ -31,8 +31,6 @@ export class ManagedPolicyRefusedError extends Schema.TaggedError<ManagedPolicyR
   }
 }
 
-export const isManagedPolicyRefusedError = Schema.is(ManagedPolicyRefusedError);
-
 const CLIENT_AUTH_POLICY: Record<ManagedPolicyClient, ServerAuthPolicy> = {
   desktop: "desktop-managed-local",
   "local-browser": "loopback-browser",
@@ -64,7 +62,7 @@ export const allowsRemoteClients = (policy: PolicyDocument) =>
 export const allowsConnect = (policy: PolicyDocument) =>
   policy.document?.limits?.connect !== false && allowsRemoteClients(policy);
 
-export const refuse = (policy: PolicyDocument, action: string, detail?: string) =>
+const refuse = (policy: PolicyDocument, action: string, detail?: string) =>
   new ManagedPolicyRefusedError({
     organization: policy.document?.organization ?? "Your organization",
     action,
