@@ -79,11 +79,15 @@ export function WorkspaceNativeTabs(props: {
   const systemTabBar = useSystemWorkspaceTabBar();
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
-  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, startNewTask } = useAdaptiveWorkspaceLayout();
   const compactSidebarTabs = deviceType === "phone" || !layout.usesSplitView;
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
+  const workspacePage = !workspaceUsesColumns(selectedTab, workspace.settingsOpen);
+  // In an expanded split the tabs belong to the sidebar column, so they leave with it.
+  const padTabs =
+    deviceType === "pad" && (!layout.usesSplitView || panes.primarySidebarVisible || workspacePage);
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
   const request = {
     selectedScreenKey: selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!,
@@ -145,10 +149,7 @@ export function WorkspaceNativeTabs(props: {
           );
         })}
       </Tabs.Host>
-      {(deviceType === "pad" ||
-        compactTabs ||
-        (layout.primarySidebarOverlaysContent &&
-          !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
+      {(padTabs || compactTabs || (layout.primarySidebarOverlaysContent && workspacePage)) &&
       !props.hidden ? (
         <View
           pointerEvents="box-none"
