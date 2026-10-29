@@ -23,6 +23,7 @@ import {
   type ScheduledTaskSetEnabledInput,
   type ScheduledTaskUpsertInput,
   managedPolicyDeniedMessage,
+  managedRuntimeModeDenial,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -405,10 +406,8 @@ export const layer = Layer.effect(
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
-    const webhookPolicyOrganization = ManagedPolicy.deniedBy(
-      yield* ManagedPolicy.ManagedPolicy,
-      "webhookTasks",
-    );
+    const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+    const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
     // Existing webhook tasks stay stored but report why they do not run.
     const webhookPolicyBlock =
       webhookPolicyOrganization === undefined
@@ -1067,6 +1066,14 @@ export const layer = Layer.effect(
           webhookPolicyBlock,
           input.id === undefined ? {} : { taskId: input.id },
         );
+      }
+      // Refused on save rather than at run time; a disabled task can still be saved, so one
+      // stored above the ceiling can be turned off before its mode is lowered.
+      const modeDenial = input.enabled
+        ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
+        : undefined;
+      if (modeDenial !== undefined) {
+        return yield* taskError(modeDenial, input.id === undefined ? {} : { taskId: input.id });
       }
       const now = yield* localNow;
       const uuid =
