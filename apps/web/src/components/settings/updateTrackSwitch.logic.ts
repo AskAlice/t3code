@@ -1,9 +1,4 @@
-import type {
-  DesktopBridge,
-  DesktopUpdateChannel,
-  DesktopUpdateState,
-  ManagedPolicySummary,
-} from "@t3tools/contracts";
+import type { DesktopBridge, DesktopUpdateChannel, DesktopUpdateState } from "@t3tools/contracts";
 import { acceptsTrackSwitchRelease } from "@t3tools/shared/cliRelease";
 
 type TrackSwitchBridge = Pick<DesktopBridge, "setUpdateChannel">;
@@ -55,17 +50,14 @@ export async function prepareLocalTrackSwitch(
 }
 
 /**
- * Whether this app stays put while connected machines move. Its updater is off for a .deb install
- * or without a feed, and under a policy without nightly while it runs nightly; moving to Stable
- * ends that last case, so it switches itself then.
+ * Whether this app stays put while connected machines move: its updater is off, as for a .deb
+ * install or without a feed. Off only because a policy rules out its nightly channel, it moves.
  */
 export function localUpdaterStaysPut(
-  state: Pick<DesktopUpdateState, "enabled"> | null | undefined,
+  state: Pick<DesktopUpdateState, "enabled" | "channelBlockedByPolicy"> | null | undefined,
   target: DesktopUpdateChannel,
-  localPolicy: ManagedPolicySummary | undefined,
 ): boolean {
-  const updates = localPolicy?.limits?.updates;
-  const offOnlyForNightly =
-    target === "latest" && updates?.allowNightly === false && updates.mode !== "off";
-  return state?.enabled === false && !offOnlyForNightly;
+  return (
+    state?.enabled === false && !(target === "latest" && state.channelBlockedByPolicy === true)
+  );
 }

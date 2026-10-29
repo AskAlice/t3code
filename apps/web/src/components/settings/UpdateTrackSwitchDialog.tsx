@@ -74,11 +74,7 @@ function SwitchPlan({
   const updateState = useDesktopUpdateState();
   const { environments } = useEnvironments();
   const crossesLocal = desktopUpdateChannelOf(APP_VERSION) !== release.channel;
-  const updatesOff = localUpdaterStaysPut(
-    updateState,
-    release.channel,
-    environments.find(isHostedByThisApp)?.serverConfig?.managedPolicy,
-  );
+  const updatesOff = localUpdaterStaysPut(updateState, release.channel);
   // After a partial switch this app may already be on the track; then only remotes move.
   const switchesLocal = crossesLocal && !updatesOff;
   const [checking, setChecking] = useState(false);

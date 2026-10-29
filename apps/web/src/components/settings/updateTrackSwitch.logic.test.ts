@@ -76,21 +76,12 @@ describe("prepareLocalTrackSwitch", () => {
 });
 
 describe("localUpdaterStaysPut", () => {
-  it("moves an app whose updater is off only because its policy has no nightly", () => {
-    const policy = (updates: { mode: "auto" | "off"; allowNightly?: boolean }) => ({
-      organization: "Example Corp",
-      lockedSettings: [],
-      limits: { updates },
-    });
-    const off = { enabled: false };
-    expect(localUpdaterStaysPut(off, "latest", policy({ mode: "auto", allowNightly: false }))).toBe(
-      false,
-    );
-    expect(
-      localUpdaterStaysPut(off, "nightly", policy({ mode: "auto", allowNightly: false })),
-    ).toBe(true);
-    expect(localUpdaterStaysPut(off, "latest", policy({ mode: "off" }))).toBe(true);
-    expect(localUpdaterStaysPut(off, "latest", undefined)).toBe(true);
-    expect(localUpdaterStaysPut({ enabled: true }, "nightly", undefined)).toBe(false);
+  it("moves an app whose updater is off only because its policy rules out nightly", () => {
+    const blocked = { enabled: false, channelBlockedByPolicy: true as const };
+    expect(localUpdaterStaysPut(blocked, "latest")).toBe(false);
+    expect(localUpdaterStaysPut(blocked, "nightly")).toBe(true);
+    // Off for another reason too, such as T3CODE_DISABLE_AUTO_UPDATE or a .deb install.
+    expect(localUpdaterStaysPut({ enabled: false }, "latest")).toBe(true);
+    expect(localUpdaterStaysPut({ enabled: true }, "nightly")).toBe(false);
   });
 });
