@@ -26,6 +26,18 @@ describe("managedInstanceLocks", () => {
     expect(locks?.reason).toBe("Managed by Example Corp.");
   });
 
+  it("treats a bare environment path as every variable", () => {
+    const ceilingPolicy = {
+      ...policy,
+      limits: {
+        providers: { lockedInstanceFields: { [codex]: ["config.binaryPath", "environment"] } },
+      },
+    };
+    const locks = managedInstanceLocks(ceilingPolicy, codex);
+    expect(locks?.wholeEnvironment).toBe(true);
+    expect(managedInstanceLocks(policy, codex)?.wholeEnvironment).toBe(false);
+  });
+
   it("locks nothing for drivers the policy does not pin, or without a policy", () => {
     expect(managedInstanceLocks(policy, claude)).toBeUndefined();
     expect(managedInstanceLocks(undefined, codex)).toBeUndefined();

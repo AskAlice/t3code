@@ -44,6 +44,8 @@ export interface ManagedInstanceLocks {
   readonly configKeys: ReadonlySet<string>;
   /** Environment variables users cannot edit, rename, or remove. */
   readonly environmentNames: ReadonlySet<string>;
+  /** Under a runtime-mode ceiling every variable is the administrator's, not only named ones. */
+  readonly wholeEnvironment: boolean;
   readonly reason: string;
 }
 
@@ -59,6 +61,7 @@ export function managedInstanceLocks(
   return {
     configKeys: fieldsUnder("config."),
     environmentNames: fieldsUnder("environment."),
+    wholeEnvironment: paths.includes("environment"),
     reason: `Managed by ${policy.organization}.`,
   };
 }

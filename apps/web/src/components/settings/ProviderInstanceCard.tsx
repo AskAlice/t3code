@@ -46,7 +46,7 @@ import { DraftInput } from "../ui/draft-input";
 import { SecretInput } from "./SecretInput";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
-import { ManagedControl } from "../ManagedPolicy";
+import { ManagedControl, ManagedNotice } from "../ManagedPolicy";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
 import { disallowedProviderMessage, isManagedDriverAllowed } from "@t3tools/contracts";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -1250,10 +1250,13 @@ export function ProviderInstanceCard({
 
       <SettingsSection
         title="Environment"
-        inert={readOnly}
-        aria-disabled={readOnly || undefined}
+        inert={readOnly || instanceLocks?.wholeEnvironment}
+        aria-disabled={readOnly || instanceLocks?.wholeEnvironment || undefined}
         className={readOnly ? "opacity-50 select-none" : undefined}
       >
+        {instanceLocks?.wholeEnvironment ? (
+          <ManagedNotice>{instanceLocks.reason}</ManagedNotice>
+        ) : null}
         <ProviderEnvironmentSection
           environment={genericEnvironment}
           onChange={updateGenericEnvironment}
