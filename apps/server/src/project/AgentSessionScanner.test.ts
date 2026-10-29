@@ -1262,6 +1262,55 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("repeated imports reach older transcripts behind already-imported ones", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-repeat-import-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-repeat-import-codex-");
+        const workspace = yield* makeTempDir("t3code-repeat-import-workspace-");
+        const sessionIds = Array.from(
+          { length: 102 },
+          (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        );
+        for (const [index, sessionId] of sessionIds.entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "p", `${sessionId}.jsonl`),
+            // 999 cwd-less records cost 1,000 metadata records, so 100 newer transcripts
+            // exhaust MAX_METADATA_RECORDS_PER_SOURCE.
+            contents:
+              "{}\n".repeat(999) +
+              `${encodeTranscriptRecord({
+                type: "user",
+                cwd: workspace,
+                sessionId,
+                timestamp: "2026-08-23T12:00:00.000Z",
+                message: { role: "user", content: `Prompt ${index}` },
+              })}\n`,
+            mtimeMs: nowMs - (index + 1) * 60_000,
+          });
+        }
+
+        const imported = yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const completed: Array<AgentSessionImportSource> = [];
+          while (true) {
+            const outcomes = yield* scanner
+              .recentThreads(workspace, completed)
+              .pipe(Stream.runCollect);
+            const added = Array.from(outcomes).flatMap((outcome) =>
+              outcome._tag === "Importable" ? [outcome.source] : [],
+            );
+            if (added.length === 0) return completed;
+            completed.push(...added);
+          }
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+
+        expect(imported.map((source) => source.providerSessionId).toSorted()).toEqual(sessionIds);
+      }),
+    );
+
     for (const source of ["claudeAgent", "codex"] as const) {
       for (const replacement of [
         "same root",
