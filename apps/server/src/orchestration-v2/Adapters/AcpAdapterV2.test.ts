@@ -831,6 +831,11 @@ describe("AcpAdapterV2", () => {
         title,
         oneOf: labels.map((label) => ({ const: label, title: label })),
       });
+      const multiChoice = (title: string, labels: ReadonlyArray<string>) => ({
+        type: "array",
+        title,
+        items: { anyOf: labels.map((label) => ({ const: label, title: label })) },
+      });
       const other = { type: "string", title: "Other (type your own)" };
       const driver = ProviderDriverKind.make("acpRegistry");
       const transcript = yield* decodeAcpReplayTranscript(
@@ -878,7 +883,7 @@ describe("AcpAdapterV2", () => {
                     properties: {
                       q0: choice("What is your favorite color?", ["Red", "Blue", "Green"]),
                       q0__other: other,
-                      q1: choice("What is your favorite fruit?", ["Apple", "Banana", "Cherry"]),
+                      q1: multiChoice("Which fruits do you like?", ["Apple", "Banana", "Cherry"]),
                       q1__other: other,
                     },
                   },
@@ -891,7 +896,10 @@ describe("AcpAdapterV2", () => {
                 kind: "response",
                 method: "elicitation/create",
                 // oh-my-pi reads a typed answer only from `q<i>__other` and a pick only from `q<i>`.
-                result: { action: "accept", content: { q0: "Blue", q1__other: "Mango" } },
+                result: {
+                  action: "accept",
+                  content: { q0: "Blue", q1: ["Cherry"], q1__other: "Mango" },
+                },
               },
             },
             {
@@ -973,12 +981,12 @@ describe("AcpAdapterV2", () => {
         })),
         [
           { question: "What is your favorite color?", options: ["Red", "Blue", "Green"] },
-          { question: "What is your favorite fruit?", options: ["Apple", "Banana", "Cherry"] },
+          { question: "Which fruits do you like?", options: ["Apple", "Banana", "Cherry"] },
         ],
       );
       yield* runtime.respondToRuntimeRequest({
         requestId: item.turnItem.requestId,
-        answers: { [questions[0]!.id]: "Blue", [questions[1]!.id]: "Mango" },
+        answers: { [questions[0]!.id]: "Blue", [questions[1]!.id]: ["Cherry", "Mango"] },
       });
       const terminal = yield* runtime.events.pipe(
         Stream.filter((event) => event.type === "turn.terminal"),

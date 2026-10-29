@@ -320,6 +320,8 @@ function flattenCompositions(
     Object.entries(value).map(([key, child]) => [key, flattenCompositions(child, definitions)]),
   );
   const { allOf, anyOf, ...base } = normalized;
+  // In a `properties` map, `anyOf` is a property name (TitledMultiSelectItems), not a keyword.
+  if (anyOf !== undefined && !isJsonArray(anyOf)) base.anyOf = anyOf;
   const merge = (left: Schema.Json, right: Schema.Json): Schema.Json => {
     if (
       left === null ||

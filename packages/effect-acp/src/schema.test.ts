@@ -4,6 +4,9 @@ import * as Schema from "effect/Schema";
 import * as V1 from "./_generated/schema-v1.gen.ts";
 import * as V2 from "./schema.ts";
 
+const isV1MultiSelectItems = Schema.is(V1.MultiSelectItems);
+const isV2MultiSelectItems = Schema.is(V2.MultiSelectItems);
+
 describe("pinned ACP wire schemas", () => {
   it("validates known content variants without accepting malformed ones as future content", () => {
     const accepts = Schema.is(V2.ContentBlock);
@@ -21,5 +24,12 @@ describe("pinned ACP wire schemas", () => {
     const isAvailableCommand2 = Schema.is(V2.AvailableCommand);
 
     expect(isAvailableCommand2({ ...command, input: { type: "text", hint: "Task" } })).toBe(true);
+  });
+
+  it("accepts titled multi-select items, whose options sit under a property named anyOf", () => {
+    const items = { anyOf: [{ const: "lint", title: "Lint" }] };
+    expect(isV2MultiSelectItems(items)).toBe(true);
+    expect(isV1MultiSelectItems(items)).toBe(true);
+    expect(isV2MultiSelectItems({ anyOf: [] })).toBe(false);
   });
 });
