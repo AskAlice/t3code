@@ -1169,44 +1169,54 @@ describe("launcher update resume", () => {
       type: "ready",
       payload: { at, environment: { serverVersion }, ...(updateOutcome ? { updateOutcome } : {}) },
     }) as ServerLifecycleStreamEvent;
+  const after = (delay: Duration.Input, event: ServerLifecycleStreamEvent) =>
+    Stream.fromEffect(Effect.as(Effect.sleep(delay), event));
+  const committed = (id: string, fromVersion: string, targetVersion: string) => ({
+    id,
+    fromVersion,
+    targetVersion,
+    status: "committed" as const,
+  });
+  const ACCEPTING = ready("2026-08-01T00:00:00.000Z", "0.0.30");
+  const REPLACEMENT = ready("2026-08-01T00:05:00.000Z", "0.0.31");
 
-  // The old process's replayed ready arrives first; the restarted host's ready a minute later.
-  const runLauncherUpdate = Effect.fn("ServerUpdateTest.runLauncherUpdate")(function* (
-    oldProcessReplay: ServerLifecycleStreamEvent,
-    newProcessReady: ServerLifecycleStreamEvent,
-    // The download outlasts the old process's replay, and the old process is gone on resume.
-    options: { readonly oldProcessGoneOnResume?: boolean } = {},
-  ) {
-    const subscribed = yield* Deferred.make<void>();
-    let lifecycleSubscriptions = 0;
-    const complete = {
-      type: "complete" as const,
-      result: {
-        targetVersion: "0.0.31",
-        method: "boot-service" as const,
-        updateId: "update-1",
-      },
-    };
+  // Lifecycle subscriptions opened before the update is acknowledged reach the accepting
+  // process; later ones reach whatever the host has become.
+  const launchUpdate = Effect.fn("ServerUpdateTest.launchUpdate")(function* (host: {
+    readonly accepting: Stream.Stream<ServerLifecycleStreamEvent>;
+    readonly resumed: Stream.Stream<ServerLifecycleStreamEvent>;
+  }) {
+    const started = yield* Deferred.make<void>();
+    const resumeSubscribed = yield* Deferred.make<void>();
+    let acknowledged = false;
     const client = {
       [WS_METHODS.subscribeServerConfig]: () => Stream.never,
       [WS_METHODS.serverUpdateServerWithProgress]: () =>
-        options.oldProcessGoneOnResume
-          ? Stream.fromEffect(Effect.as(Effect.sleep("2 seconds"), complete))
-          : Stream.make(complete),
-      [WS_METHODS.subscribeServerLifecycle]: () =>
-        options.oldProcessGoneOnResume && ++lifecycleSubscriptions > 1
-          ? Stream.concat(Stream.make(newProcessReady), Stream.never)
-          : Stream.fromEffect(
-              Deferred.succeed(subscribed, undefined).pipe(
-                Effect.andThen(Effect.sleep("1 second")),
-                Effect.as(oldProcessReplay),
-              ),
-            ).pipe(
-              Stream.concat(
-                Stream.fromEffect(Effect.as(Effect.sleep("1 minute"), newProcessReady)),
-              ),
-              Stream.concat(Stream.never),
+        Stream.fromEffect(
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                acknowledged = true;
+                return {
+                  type: "complete" as const,
+                  result: {
+                    targetVersion: "0.0.31",
+                    method: "boot-service" as const,
+                    updateId: "update-1",
+                  },
+                };
+              }),
             ),
+          ),
+        ),
+      [WS_METHODS.subscribeServerLifecycle]: () => {
+        const events = acknowledged
+          ? Deferred.succeed(resumeSubscribed, undefined).pipe(Effect.as(host.resumed))
+          : Effect.succeed(host.accepting);
+        return Stream.unwrap(
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(events)),
+        ).pipe(Stream.concat(Stream.never));
+      },
     } as unknown as WsRpcProtocolClient;
     const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
       target: TARGET,
@@ -1266,7 +1276,6 @@ describe("launcher update resume", () => {
     );
     const updateStateAtom = serverUpdateStateAtom(TARGET.environmentId);
     yield* AtomRegistry.mount(registry, updateStateAtom);
-    const updateState = () => registry.get(updateStateAtom);
 
     yield* Effect.promise(() =>
       atoms.updateServer.run(registry, {
@@ -1274,11 +1283,12 @@ describe("launcher update resume", () => {
         input: { targetVersion: "0.0.31" },
       }),
     ).pipe(Effect.forkScoped);
-    yield* Deferred.await(subscribed);
-    yield* TestClock.adjust("1 second");
-    const afterOldReplay = updateState();
-    yield* TestClock.adjust("1 minute");
-    return { afterOldReplay, afterNewProcess: updateState() };
+    return {
+      // The host saw its first call: the update request or a lifecycle subscription.
+      started: Deferred.await(started),
+      resumeSubscribed: Deferred.await(resumeSubscribed),
+      state: () => registry.get(updateStateAtom),
+    };
   });
 
   const UNCOMMITTED_RESUME = {
@@ -1292,13 +1302,16 @@ describe("launcher update resume", () => {
   it.effect("fails promptly when a server the launcher did not start comes back", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { afterOldReplay, afterNewProcess } = yield* runLauncherUpdate(
-          ready("2026-08-01T00:00:00.000Z", "0.0.30"),
-          ready("2026-08-01T00:05:00.000Z", "0.0.31"),
-        );
+        const update = yield* launchUpdate({
+          accepting: Stream.make(ACCEPTING),
+          resumed: after("1 second", ACCEPTING).pipe(Stream.concat(after("1 minute", REPLACEMENT))),
+        });
+        yield* update.resumeSubscribed;
 
-        expect(afterOldReplay).toMatchObject({ status: "running", stage: "resuming" });
-        expect(afterNewProcess).toEqual(UNCOMMITTED_RESUME);
+        yield* TestClock.adjust("1 second");
+        expect(update.state()).toMatchObject({ status: "running", stage: "resuming" });
+        yield* TestClock.adjust("1 minute");
+        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
       }),
     ),
   );
@@ -1306,19 +1319,32 @@ describe("launcher update resume", () => {
   it.effect("fails promptly when the restarted server reports another update's outcome", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const outcome = (id: string, fromVersion: string, targetVersion: string) => ({
-          id,
-          fromVersion,
-          targetVersion,
-          status: "committed" as const,
-        });
-        const { afterOldReplay, afterNewProcess } = yield* runLauncherUpdate(
-          ready("2026-08-01T00:00:00.000Z", "0.0.30", outcome("update-0", "0.0.29", "0.0.30")),
-          ready("2026-08-01T00:05:00.000Z", "0.0.31", outcome("manual-1", "0.0.30", "0.0.31")),
+        const accepting = ready(
+          "2026-08-01T00:00:00.000Z",
+          "0.0.30",
+          committed("update-0", "0.0.29", "0.0.30"),
         );
+        const update = yield* launchUpdate({
+          accepting: Stream.make(accepting),
+          resumed: after("1 second", accepting).pipe(
+            Stream.concat(
+              after(
+                "1 minute",
+                ready(
+                  "2026-08-01T00:05:00.000Z",
+                  "0.0.31",
+                  committed("manual-1", "0.0.30", "0.0.31"),
+                ),
+              ),
+            ),
+          ),
+        });
+        yield* update.resumeSubscribed;
 
-        expect(afterOldReplay).toMatchObject({ status: "running", stage: "resuming" });
-        expect(afterNewProcess).toEqual(UNCOMMITTED_RESUME);
+        yield* TestClock.adjust("1 second");
+        expect(update.state()).toMatchObject({ status: "running", stage: "resuming" });
+        yield* TestClock.adjust("1 minute");
+        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
       }),
     ),
   );
@@ -1326,13 +1352,51 @@ describe("launcher update resume", () => {
   it.effect("fails promptly when the old server is gone before the resume wait subscribes", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { afterNewProcess } = yield* runLauncherUpdate(
-          ready("2026-08-01T00:00:00.000Z", "0.0.30"),
-          ready("2026-08-01T00:05:00.000Z", "0.0.31"),
-          { oldProcessGoneOnResume: true },
-        );
+        const update = yield* launchUpdate({
+          accepting: Stream.make(ACCEPTING),
+          resumed: after("1 second", REPLACEMENT),
+        });
+        yield* update.resumeSubscribed;
 
-        expect(afterNewProcess).toEqual(UNCOMMITTED_RESUME);
+        yield* TestClock.adjust("1 minute");
+        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails promptly when the accepting server's replay arrives after a quick acknowledgement",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const update = yield* launchUpdate({
+            accepting: after("3 seconds", ACCEPTING),
+            resumed: after("1 second", REPLACEMENT),
+          });
+          yield* update.started;
+          yield* TestClock.adjust("3 seconds");
+          yield* update.resumeSubscribed;
+
+          yield* TestClock.adjust("1 minute");
+          expect(update.state()).toEqual(UNCOMMITTED_RESUME);
+        }),
+      ),
+  );
+
+  it.effect("finishes when the restarted server commits this update", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const update = yield* launchUpdate({
+          accepting: Stream.make(ACCEPTING),
+          resumed: after(
+            "1 second",
+            ready("2026-08-01T00:05:00.000Z", "0.0.31", committed("update-1", "0.0.30", "0.0.31")),
+          ),
+        });
+        yield* update.resumeSubscribed;
+
+        yield* TestClock.adjust("1 minute");
+        expect(update.state()).toMatchObject({ status: "idle" });
       }),
     ),
   );

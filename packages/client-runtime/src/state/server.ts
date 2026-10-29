@@ -134,6 +134,8 @@ export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTe
 // Covers the service launcher's 30-minute trial deadline (PREPARED_TIMEOUT_MS)
 // and a final restart of the previous version when the trial rolls back.
 const SERVER_UPDATE_RESUME_TIMEOUT = Duration.minutes(32);
+// A live host replays its ready on subscribe within a round trip; past this, update without a baseline.
+const SERVER_UPDATE_ACCEPTING_READY_TIMEOUT = Duration.seconds(5);
 
 export function matchesServerUpdateReadyEvent(
   result: ServerSelfUpdateResult,
@@ -858,12 +860,7 @@ export function createServerEnvironmentAtoms<R, E>(
         const desktopCommitStarting = yield* Deferred.make<void>();
         const desktopReconnectObserverArmed = yield* Deferred.make<void>();
         const desktopReconnected = yield* Deferred.make<void>();
-        const acceptedAt = yield* Ref.make(Option.none<string>());
-        const recordAcceptedAt = (at: string) =>
-          Ref.modify(acceptedAt, (current) => {
-            const recorded = Option.getOrElse(current, () => at);
-            return [recorded, Option.some(recorded)] as const;
-          });
+        let acceptedAt: string | undefined;
         yield* Deferred.await(desktopCommitStarting).pipe(
           Effect.andThen(
             environmentRegistry.stateChanges(target.environmentId).pipe(
@@ -890,8 +887,8 @@ export function createServerEnvironmentAtoms<R, E>(
               fromVersion,
               targetVersion,
             });
-            // The replay delivered before the request settles is the accepting process's own.
-            yield* environmentRegistry
+            // Read before the request so a ready from after it can never pose as the accepting process.
+            const acceptingReady = yield* environmentRegistry
               .followStream(
                 target.environmentId,
                 subscribe(WS_METHODS.subscribeServerLifecycle, {}),
@@ -901,14 +898,11 @@ export function createServerEnvironmentAtoms<R, E>(
                   (event): event is ServerLifecycleStreamReadyEvent => event.type === "ready",
                 ),
                 Stream.runHead,
-                Effect.flatMap(
-                  Option.match({
-                    onNone: () => Effect.void,
-                    onSome: (ready) => recordAcceptedAt(ready.payload.at),
-                  }),
-                ),
-                Effect.forkChild,
+                Effect.timeoutOption(SERVER_UPDATE_ACCEPTING_READY_TIMEOUT),
+                Effect.map(Option.flatten),
+                Effect.orElseSucceed(() => Option.none<ServerLifecycleStreamReadyEvent>()),
               );
+            acceptedAt = Option.getOrUndefined(acceptingReady)?.payload.at;
 
             const supportsProgress =
               currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
@@ -1027,13 +1021,8 @@ export function createServerEnvironmentAtoms<R, E>(
           .followStream(target.environmentId, subscribe(WS_METHODS.subscribeServerLifecycle, {}))
           .pipe(
             Stream.filter(
-              (event): event is ServerLifecycleStreamReadyEvent => event.type === "ready",
-            ),
-            // Without a captured replay, the first ready seen is taken as the accepting process.
-            Stream.filterEffect((event) =>
-              recordAcceptedAt(event.payload.at).pipe(
-                Effect.map((at) => matchesServerUpdateResumeEvent(result, event, at)),
-              ),
+              (event): event is ServerLifecycleStreamReadyEvent =>
+                event.type === "ready" && matchesServerUpdateResumeEvent(result, event, acceptedAt),
             ),
             Stream.runHead,
             Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),
