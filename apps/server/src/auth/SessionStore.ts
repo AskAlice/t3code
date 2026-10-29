@@ -441,7 +441,6 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
-/** How long a revoked or expired session row is kept before it is deleted. */
 const STALE_SESSION_RETENTION = Duration.days(1);
 
 const SessionClaims = Schema.Struct({
