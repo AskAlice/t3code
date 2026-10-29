@@ -112,7 +112,12 @@ export function WorkspaceToolbar(props: {
     const frame = requestAnimationFrame(restoreShownSearch);
     return () => cancelAnimationFrame(frame);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each dependency shows or moves the search bar, which needs its focus and query restored.
-  }, [tabActive, focused, bottomSearch, selectedTab, searchVisible, searchHostVisible]);
+  }, [tabActive, focused, bottomSearch, selectedTab, searchVisible, searchHostVisible, deviceType]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- copies a query rewritten in JS (the PR draft filter) into the native field; activation stays with the restore above
+  useEffect(() => {
+    if (!tabActive || tab.searchMode === "resting") return;
+    searchRef.current?.setText(tab.query);
+  }, [tabActive, tab.searchMode, tab.query]);
   const composeButton = nativeToolbarCompose ? (
     <Toolbar.Button
       identifier="workspace-compose"
