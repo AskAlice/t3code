@@ -77,9 +77,14 @@ another turn until someone lowers its mode. A user's default above the limit sta
 at the limit instead.
 
 With `maxRuntimeMode` set, each provider's launch settings belong to you: binary path, launch
-arguments, and environment variables come from `providers.instances` or T3 Code's defaults, and
-users cannot change them. Otherwise a wrapper script or a launch flag could turn off the
-provider's own approvals.
+arguments, config home, and every environment variable come from `providers.instances` or
+T3 Code's defaults, and users cannot change them. Otherwise a wrapper script, a launch flag, or a
+variable such as `NODE_OPTIONS` could turn off the provider's own approvals. Pin any variables
+your users need, such as a gateway URL, in `providers.instances`.
+
+Providers still read their own configuration from the user's home directory, for example
+`~/.claude` and `~/.codex`. Restrict those with each provider's managed configuration; see
+[What a policy does not cover](#what-a-policy-does-not-cover).
 
 ### Clients and T3 Connect
 
