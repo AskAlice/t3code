@@ -92,6 +92,15 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
+export const DeleteStaleAuthSessionsInput = Schema.Struct({
+  cutoff: Schema.DateTimeUtcFromString,
+  excludeSessionIds: Schema.Array(AuthSessionId),
+});
+export type DeleteStaleAuthSessionsInput = typeof DeleteStaleAuthSessionsInput.Type;
+
+/** Keeps each delete short so the first prune of a large table never hogs the SQLite writer. */
+const DELETE_STALE_BATCH_SIZE = 500;
+
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
@@ -119,6 +128,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    readonly deleteStale: (
+      input: DeleteStaleAuthSessionsInput,
+    ) => Effect.Effect<number, AuthSessionRepositoryError>;
   }
 >()("t3/persistence/AuthSessions/AuthSessionRepository") {}
 
@@ -347,6 +359,26 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const deleteStaleSessionRows = SqlSchema.findAll({
+    Request: DeleteStaleAuthSessionsInput,
+    Result: Schema.Struct({ sessionId: Schema.String }),
+    execute: ({ cutoff, excludeSessionIds }) =>
+      sql`
+        DELETE FROM auth_sessions
+        WHERE session_id IN (
+          SELECT session_id
+          FROM auth_sessions
+          WHERE (
+              (revoked_at IS NOT NULL AND revoked_at < ${cutoff})
+              OR (revoked_at IS NULL AND expires_at < ${cutoff})
+            )
+            AND NOT (${sql.in("session_id", excludeSessionIds)})
+          LIMIT ${DELETE_STALE_BATCH_SIZE}
+        )
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
   const create: AuthSessionRepository["Service"]["create"] = (input) =>
     createSessionRow(input).pipe(
       Effect.mapError(
@@ -480,6 +512,24 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const deleteStale: AuthSessionRepository["Service"]["deleteStale"] = (input) => {
+    const deleteBatches = (deleted: number): Effect.Effect<number, AuthSessionRepositoryError> =>
+      deleteStaleSessionRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "AuthSessionRepository.deleteStale:query",
+            "AuthSessionRepository.deleteStale:decodeRows",
+          ),
+        ),
+        Effect.flatMap((rows) =>
+          rows.length < DELETE_STALE_BATCH_SIZE
+            ? Effect.succeed(deleted + rows.length)
+            : deleteBatches(deleted + rows.length),
+        ),
+      );
+    return deleteBatches(0);
+  };
+
   return {
     create,
     createReplacingActive,
@@ -489,6 +539,7 @@ export const make = Effect.gen(function* () {
     revoke,
     revokeAllExcept,
     setLastConnectedAt,
+    deleteStale,
   } satisfies AuthSessionRepository["Service"];
 });
 
