@@ -2097,6 +2097,8 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
+      // Double-clicking a sidebar row opens its thread and its rename field in one gesture.
+      if (document.activeElement?.matches("[data-sidebar-row] input")) return;
       focusComposerStable();
     });
     return () => {
