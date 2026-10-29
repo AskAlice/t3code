@@ -139,7 +139,7 @@ export class CodexShadowHomeSymlinkPermissionError extends Schema.TaggedError<Co
   },
 ) {
   override get message(): string {
-    return `Windows blocked T3 Code from linking '${this.entryName}' into the Codex shadow home at '${this.linkPath}'. Turn on Developer Mode in Windows Settings (System > For developers), then retry.`;
+    return `Windows blocked T3 Code from linking '${this.entryName}' into the Codex shadow home at '${this.linkPath}'. Turn on Developer Mode (search Windows Settings for "For developers"), then retry.`;
   }
 }
 

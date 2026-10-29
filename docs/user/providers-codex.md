@@ -30,9 +30,10 @@ covers installation and custom configuration.
 Add another ChatGPT account in **Settings → Providers**, then select the account
 from the thread's model picker. Compatible accounts can continue the same thread.
 Connecting accounts through T3 Code leaves your CLI login unchanged.
-On Windows, turn on Developer Mode (**Settings → System → For developers**) before
-adding another account: T3 Code links the shared Codex home into each account's own
-folder.
+
+On Windows, turn on Developer Mode (search Windows Settings for **For developers**)
+before adding another account or a shadow home: T3 Code links the shared Codex home
+into each account's own folder.
 
 ### Multiple CLI logins
 
