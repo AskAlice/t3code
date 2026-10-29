@@ -1,12 +1,44 @@
 import {
+  BearerConnectionProfile,
+  BearerConnectionTarget,
+  type EnvironmentPresentation,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
+  SshConnectionProfile,
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import * as Option from "effect/Option";
+import { AtomRegistry } from "effect/reactivity";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { resolveRemoteOpenState } from "./remoteOpen";
+import { resolveRemoteOpenState, useRemoteOpenState } from "./remoteOpen";
+
+const atomMocks = vi.hoisted(() => ({
+  registry: null as AtomRegistry.AtomRegistry | null,
+  presentation: null as EnvironmentPresentation | null,
+}));
+
+vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAtomValue: ((atom: Parameters<AtomRegistry.AtomRegistry["get"]>[0]) =>
+    atomMocks.registry!.get(atom)) as never,
+}));
+
+vi.mock(import("./state/presentation"), async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    environmentPresentations: {
+      presentationAtom: () => Atom.make(() => atomMocks.presentation),
+    },
+  } as never;
+});
+
+function setup(presentation: EnvironmentPresentation) {
+  atomMocks.registry = AtomRegistry.make();
+  atomMocks.presentation = presentation;
+  vi.stubGlobal("window", {});
+}
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -140,6 +172,60 @@ describe("resolveRemoteOpenState", () => {
         }),
       ).toEqual({ mode: "remote-unavailable" });
     }
+  });
+});
+
+describe("useRemoteOpenState", () => {
+  it("uses a saved SSH route's alias while a Tailscale route is in use", () => {
+    setup({
+      entry: {
+        target: new BearerConnectionTarget({ environmentId, label: "sol", connectionId: "ts-1" }),
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId: "ts-1",
+            environmentId,
+            label: "sol",
+            httpBaseUrl: "https://sol.tail1234.ts.net",
+            wsBaseUrl: "wss://sol.tail1234.ts.net",
+            network: "tailscale",
+          }),
+        ),
+        alternateRoutes: [
+          {
+            target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+            profile: Option.some(
+              new SshConnectionProfile({
+                connectionId: "ssh-1",
+                environmentId,
+                label: "sol",
+                target: {
+                  alias: "sol-alias",
+                  hostname: "sol.tail1234.ts.net",
+                  username: null,
+                  port: null,
+                },
+              }),
+            ),
+          },
+        ],
+        enabled: true,
+      },
+      connection: { phase: "connected", error: null, traceId: null },
+      serverConfig: {
+        remoteOpenTargets: [
+          { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
+        ],
+      } as never,
+    });
+
+    const state = useRemoteOpenState(environmentId);
+    vi.unstubAllGlobals();
+
+    expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol-alias" } });
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("zed://ssh/sol-alias/work/project");
   });
 });
 
