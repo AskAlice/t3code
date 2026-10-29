@@ -40,6 +40,20 @@ it("answers oh-my-pi multi-select and free-text questions in the keys it decodes
   });
 });
 
+it("names a lone oh-my-pi free-text question by the form message", () => {
+  const extracted = extractOmpElicitationForm({
+    mode: "form",
+    sessionId: "omp",
+    message: "Which branch should I use?",
+    requestedSchema: { type: "object", properties: { q0__other: other } },
+  });
+  assert.strictEqual(extracted?.questions[0]?.question, "Which branch should I use?");
+  assert.deepEqual(extracted?.respond({ q0: "main" }), {
+    action: "accept",
+    content: { q0__other: "main" },
+  });
+});
+
 it("leaves forms that are not oh-my-pi's to the generic fallback", () => {
   assert.isUndefined(form({ q0__other: other, q2__other: other }));
   assert.isUndefined(form({ q0: { type: "string", enum: ["a"] }, q0__other: other }));
