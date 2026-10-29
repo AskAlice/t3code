@@ -384,48 +384,45 @@ export function setProjectExpanded(
   };
 }
 
-export function reorderProjects(
+interface ProjectOrderGroup {
+  readonly memberProjects: ReadonlyArray<{
+    readonly physicalProjectKey: string;
+    readonly workspaceRoot: string;
+  }>;
+}
+
+/**
+ * Moves `groups[fromIndex]` to `toIndex` as a whole block. Saved keys of
+ * projects not in `groups` (disabled or disconnected environments) keep their
+ * positions; the slots visible projects held are refilled in the new order.
+ */
+export function reorderProjectGroups(
   state: UiState,
-  currentProjectOrder: readonly string[],
-  draggedProjectIds: readonly string[],
-  targetProjectIds: readonly string[],
+  groups: readonly ProjectOrderGroup[],
+  fromIndex: number,
+  toIndex: number,
 ): UiState {
-  if (draggedProjectIds.length === 0) {
+  const movedGroups = [...groups];
+  const [moved] = movedGroups.splice(fromIndex, 1);
+  if (moved === undefined || fromIndex === toIndex) {
     return state;
   }
-  const draggedSet = new Set(draggedProjectIds);
-  const targetSet = new Set(targetProjectIds);
-  if (draggedProjectIds.every((id) => targetSet.has(id))) {
-    return state;
-  }
-
-  const originalTargetIndex = currentProjectOrder.findIndex((id) => targetSet.has(id));
-  if (originalTargetIndex < 0) {
-    return state;
-  }
-
-  const projectOrder = [...currentProjectOrder];
-
-  const removed: string[] = [];
-  let draggedBeforeTarget = 0;
-  for (let i = projectOrder.length - 1; i >= 0; i--) {
-    if (draggedSet.has(projectOrder[i]!)) {
-      removed.unshift(projectOrder.splice(i, 1)[0]!);
-      if (i < originalTargetIndex) {
-        draggedBeforeTarget++;
-      }
-    }
-  }
-  if (removed.length === 0) {
-    return state;
-  }
-
-  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
-  projectOrder.splice(insertIndex, 0, ...removed);
-  return {
-    ...state,
-    projectOrder,
-  };
+  movedGroups.splice(toIndex, 0, moved);
+  const members = movedGroups.flatMap((group) => group.memberProjects);
+  const visibleKeys = new Set(
+    members.flatMap((member) => [
+      member.physicalProjectKey,
+      legacyProjectCwdPreferenceKey(member.workspaceRoot),
+    ]),
+  );
+  const nextKeys = members.map((member) => member.physicalProjectKey).values();
+  const projectOrder = state.projectOrder.flatMap((key) => {
+    if (!visibleKeys.has(key)) return [key];
+    const next = nextKeys.next();
+    return next.done ? [] : [next.value];
+  });
+  projectOrder.push(...nextKeys);
+  return { ...state, projectOrder };
 }
 
 interface UiStateStore extends UiState {
@@ -436,10 +433,10 @@ interface UiStateStore extends UiState {
   setSidebarProjectScopeKeys: (projectKeys: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
-  reorderProjects: (
-    currentProjectOrder: readonly string[],
-    draggedProjectIds: readonly string[],
-    targetProjectIds: readonly string[],
+  reorderProjectGroups: (
+    groups: readonly ProjectOrderGroup[],
+    fromIndex: number,
+    toIndex: number,
   ) => void;
 }
 
@@ -458,10 +455,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
-  reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
-    set((state) =>
-      reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
-    ),
+  reorderProjectGroups: (groups, fromIndex, toIndex) =>
+    set((state) => reorderProjectGroups(state, groups, fromIndex, toIndex)),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

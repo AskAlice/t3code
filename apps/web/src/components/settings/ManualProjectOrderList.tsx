@@ -31,16 +31,11 @@ export function ManualProjectOrderList() {
   );
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    if (over === null || active.id === over.id) return;
-    const activeGroup = groups.find((group) => group.projectKey === active.id);
-    const overGroup = groups.find((group) => group.projectKey === over.id);
-    if (!activeGroup || !overGroup) return;
-    const memberKeys = (group: SidebarProjectSnapshot) =>
-      group.memberProjects.map((member) => member.physicalProjectKey);
-    // Group-contiguous, so the moved group lands exactly where it was dropped.
-    useUiStateStore
-      .getState()
-      .reorderProjects(groups.flatMap(memberKeys), memberKeys(activeGroup), memberKeys(overGroup));
+    if (over === null) return;
+    const fromIndex = groups.findIndex((group) => group.projectKey === active.id);
+    const toIndex = groups.findIndex((group) => group.projectKey === over.id);
+    if (fromIndex < 0 || toIndex < 0) return;
+    useUiStateStore.getState().reorderProjectGroups(groups, fromIndex, toIndex);
   };
 
   if (groups.length < 2) return null;

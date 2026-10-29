@@ -9,7 +9,7 @@ import {
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
-  reorderProjects,
+  reorderProjectGroups,
   resolveProjectExpanded,
   setProjectExpanded,
   type UiState,
@@ -81,16 +81,41 @@ describe("uiStateStore pure functions", () => {
     expect(setProjectExpanded(next, keys, false)).toBe(next);
   });
 
-  it("moves grouped project members together", () => {
-    const keyALocal = "env-local:proj-a";
-    const keyARemote = "env-remote:proj-a";
-    const keyB = "env-local:proj-b";
-    const keyC = "env-local:proj-c";
-    const currentOrder = [keyALocal, keyARemote, keyB, keyC];
+  it("moves whole project groups in either direction", () => {
+    const member = (physicalProjectKey: string) => ({
+      physicalProjectKey,
+      workspaceRoot: `/repo/${physicalProjectKey}`,
+    });
+    const groupA = { memberProjects: [member("a1"), member("a2")] };
+    const groupB = { memberProjects: [member("b1"), member("b2")] };
+    const state = makeUiState({ projectOrder: ["a1", "a2", "b1", "b2"] });
 
-    const next = reorderProjects(makeUiState(), currentOrder, [keyALocal, keyARemote], [keyC]);
+    const down = reorderProjectGroups(state, [groupA, groupB], 0, 1);
+    expect(down.projectOrder).toEqual(["b1", "b2", "a1", "a2"]);
+    expect(reorderProjectGroups(down, [groupB, groupA], 1, 0).projectOrder).toEqual([
+      "a1",
+      "a2",
+      "b1",
+      "b2",
+    ]);
+  });
 
-    expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
+  it("keeps saved positions of projects that are not loaded", () => {
+    const member = (physicalProjectKey: string, workspaceRoot: string) => ({
+      memberProjects: [{ physicalProjectKey, workspaceRoot }],
+    });
+    const state = makeUiState({
+      projectOrder: ["remote:b", legacyProjectCwdPreferenceKey("/repo/a"), "local:c"],
+    });
+
+    const next = reorderProjectGroups(
+      state,
+      [member("local:a", "/repo/a"), member("local:c", "/repo/c"), member("local:d", "/repo/d")],
+      1,
+      0,
+    );
+
+    expect(next.projectOrder).toEqual(["remote:b", "local:c", "local:a", "local:d"]);
   });
 });
 
