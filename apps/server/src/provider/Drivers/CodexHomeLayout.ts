@@ -129,8 +129,23 @@ export class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<
   }
 }
 
+export class CodexShadowHomeSymlinkPermissionError extends Schema.TaggedError<CodexShadowHomeSymlinkPermissionError>()(
+  "CodexShadowHomeSymlinkPermissionError",
+  {
+    ...CodexShadowHomeContext,
+    entryName: Schema.String,
+    linkPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Windows blocked T3 Code from linking '${this.entryName}' into the Codex shadow home at '${this.linkPath}'. Turn on Developer Mode in Windows Settings (System > For developers), then retry.`;
+  }
+}
+
 export const CodexShadowHomeError = Schema.Union([
   CodexShadowHomeFileSystemError,
+  CodexShadowHomeSymlinkPermissionError,
   CodexShadowHomePathConflictError,
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePrivateEntrySymlinkError,
@@ -149,14 +164,14 @@ type LinkState =
       readonly target: string;
     };
 
-function isNotSymlinkError(error: PlatformError.PlatformError): boolean {
+function hasUnknownErrorCode(error: PlatformError.PlatformError, code: string): boolean {
   const cause = error.reason.cause;
   return (
     error.reason._tag === "Unknown" &&
     typeof cause === "object" &&
     cause !== null &&
     "code" in cause &&
-    cause.code === "EINVAL"
+    cause.code === code
   );
 }
 
@@ -174,7 +189,7 @@ const readLinkState = Effect.fn("CodexHomeLayout.readLinkState")(function* (inpu
         if (cause.reason._tag === "NotFound") {
           return Effect.succeed<LinkState>({ _tag: "Missing" });
         }
-        if (isNotSymlinkError(cause)) {
+        if (hasUnknownErrorCode(cause, "EINVAL")) {
           return Effect.succeed<LinkState>({ _tag: "NotSymlink" });
         }
         return new CodexShadowHomeFileSystemError({
@@ -228,6 +243,7 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   const path = yield* Path.Path;
   const target = path.join(input.sharedHomePath, input.entryName);
   const link = path.join(input.effectiveHomePath, input.entryName);
+  const isWindows = yield* HostProcess.isWindows;
   const state = yield* readLinkState({
     ...input,
     linkPath: link,
@@ -236,15 +252,23 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   const createLink = input.fileSystem.symlink(target, link).pipe(
     Effect.catchTags({
       PlatformError: (cause) =>
-        new CodexShadowHomeFileSystemError({
-          sharedHomePath: input.sharedHomePath,
-          effectiveHomePath: input.effectiveHomePath,
-          operation: "symlink",
-          path: link,
-          targetPath: target,
-          entryName: input.entryName,
-          cause,
-        }),
+        isWindows && hasUnknownErrorCode(cause, "EPERM")
+          ? new CodexShadowHomeSymlinkPermissionError({
+              sharedHomePath: input.sharedHomePath,
+              effectiveHomePath: input.effectiveHomePath,
+              entryName: input.entryName,
+              linkPath: link,
+              cause,
+            })
+          : new CodexShadowHomeFileSystemError({
+              sharedHomePath: input.sharedHomePath,
+              effectiveHomePath: input.effectiveHomePath,
+              operation: "symlink",
+              path: link,
+              targetPath: target,
+              entryName: input.entryName,
+              cause,
+            }),
     }),
   );
 

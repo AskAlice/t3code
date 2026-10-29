@@ -179,7 +179,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             : {}),
         }),
       ),
-      Effect.catch(() =>
+      Effect.catch((error) =>
         runtime.auth.read.pipe(
           Effect.orElseSucceed(() => Option.none()),
           Effect.map((current) => ({
@@ -204,7 +204,10 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             ...(Option.isSome(current) && current.value.scopes.includes("chatgpt.tokens.use.direct")
               ? { usageLimits }
               : {}),
-            message: "Could not check Codex right now. Retry, or reconnect in provider settings.",
+            message:
+              error._tag === "ProviderSetupError"
+                ? error.detail
+                : "Could not check Codex right now. Retry, or reconnect in provider settings.",
           })),
         ),
       ),
