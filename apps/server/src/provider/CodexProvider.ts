@@ -73,7 +73,7 @@ const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
 // Old machines can take ~25s to start app-server and answer initialize.
-const CODEX_AUTH_PROBE_TIMEOUT_MS = 60_000;
+export const CODEX_APP_SERVER_PROBE_TIMEOUT_MS = 60_000;
 // Account/models/skills requests after initialize can exceed the shared 10s probe budget.
 const CODEX_DISCOVERY_BUDGET_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
@@ -538,7 +538,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs =
     Math.min(
-      spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS,
+      spawnedAtMs + CODEX_APP_SERVER_PROBE_TIMEOUT_MS,
       initializedAtMs + CODEX_DISCOVERY_BUDGET_MS,
     ) - CODEX_DISCOVERY_MARGIN_MS;
   const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
@@ -738,7 +738,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ...(managedAuth ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
-    Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(CODEX_APP_SERVER_PROBE_TIMEOUT_MS)),
     Effect.scoped,
     Effect.result,
   );
