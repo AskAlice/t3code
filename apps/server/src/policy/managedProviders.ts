@@ -358,13 +358,15 @@ export function makeManagedProviders(
     const pinned = rule.pin?.environment ?? [];
     const storedVariable = (name: string) =>
       stored?.environment?.find((existing) => existing.name === name);
+    const storedUnchanged = (variable: ProviderInstanceEnvironmentVariable) =>
+      (stored?.environment ?? []).some((existing) => sameVariable(variable, existing));
     const echoed = (variable: ProviderInstanceEnvironmentVariable) =>
       !variable.sensitive &&
       pinned.some((pin) => pin.name === variable.name && pin.value === variable.value);
     if (rule.environment === "all") {
       // Only the pinned variables were shown, so the user's own stay as stored.
       for (const variable of next.environment ?? []) {
-        if (echoed(variable) || sameVariable(variable, storedVariable(variable.name))) continue;
+        if (echoed(variable) || storedUnchanged(variable)) continue;
         return { _tag: "Locked", path: `providerInstances.${instanceId}.environment` };
       }
       return { _tag: "Kept", environment: stored?.environment ?? [] };
@@ -433,10 +435,16 @@ export function makeManagedProviders(
     const providerInstances: Record<string, ProviderInstanceConfig> = {};
     for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
       const stored = current.providerInstances[instanceId as ProviderInstanceId];
+      // Clients echo instances with policy fields laid over them, so compare only whether it runs.
+      // A driver's default instance runs before it is configured.
+      const wasEnabled =
+        stored !== undefined
+          ? stored.driver === instance.driver && resolveProviderInstanceEnabled(stored)
+          : instanceId === defaultInstanceIdForDriver(instance.driver);
       if (
         !isDriverAllowed(instance.driver) &&
         resolveProviderInstanceEnabled(instance) &&
-        JSON.stringify(stored) !== JSON.stringify(instance)
+        !wasEnabled
       ) {
         return {
           _tag: "Disallowed",

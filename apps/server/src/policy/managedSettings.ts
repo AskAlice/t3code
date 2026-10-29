@@ -76,6 +76,17 @@ const jsonEqual = (left: unknown, right: unknown): boolean => {
   );
 };
 
+/**
+ * Whether `value` agrees with a lock on every key it holds. Patches and project overrides carry
+ * only some of a locked object's keys, such as `{ enabled }` for a provider instance.
+ */
+const matchesLock = (value: unknown, lock: unknown): boolean =>
+  isRecord(value) && isRecord(lock)
+    ? Object.entries(value).every(
+        ([key, child]) => child === undefined || matchesLock(child, lock[key]),
+      )
+    : jsonEqual(value, lock);
+
 /** Whether `value` holds a key `existing` does not, at any depth. */
 const addsKeys = (existing: unknown, value: unknown): boolean =>
   isRecord(existing) &&
@@ -309,7 +320,7 @@ export function makeManagedSettings(
         // an attempt to change what the user sees.
         lockTargets(patch, entry).some((target) => {
           const value = getPath(patch, target);
-          return value !== undefined && !jsonEqual(value, entry.decodedValue);
+          return value !== undefined && !matchesLock(value, entry.decodedValue);
         }) ||
         lockTargets(after, entry).some((target) => {
           const value = getPath(after, target);
@@ -317,7 +328,7 @@ export function makeManagedSettings(
           return (
             value !== undefined &&
             !jsonEqual(value, getPath(before, target)) &&
-            !jsonEqual(value, entry.value)
+            !matchesLock(value, entry.value)
           );
         }),
     );

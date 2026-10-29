@@ -997,7 +997,8 @@ describe("DesktopUpdates under a managed policy", () => {
 
   it.effect("updates from the administrator's feed", () => {
     const harness = makeHarness({
-      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      // Any user can set the mock flag; it must not redirect a managed feed.
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "true" },
       policy: managed({ feedUrl: "https://updates.example.com/t3code" }),
     });
 
@@ -1030,7 +1031,8 @@ describe("DesktopUpdates under a managed policy", () => {
   it.effect("holds a nightly install until its user switches to stable", () => {
     const harness = makeHarness({
       appVersion: "1.2.3-nightly.20261028.1",
-      policy: managed({ allowNightly: false }),
+      // A managed app ignores the mock feed, so give it a real one.
+      policy: managed({ allowNightly: false, feedUrl: "https://updates.example.com/t3code" }),
     });
 
     return Effect.scoped(

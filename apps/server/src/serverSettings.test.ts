@@ -2035,6 +2035,32 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
     ),
   );
 
+  it.effect("compares a project's partial override with a locked entry by the keys it holds", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const codexId = ProviderInstanceId.make("codex");
+      const projectWith = (enabled: boolean) => ({
+        projectSettingsOverrides: {
+          [ProjectId.make("project-codex")]: { providerInstances: { [codexId]: { enabled } } },
+        },
+      });
+
+      yield* service.updateSettings(projectWith(true));
+      const refused = yield* service.updateSettings(projectWith(false)).pipe(Effect.flip);
+      assert.equal(refused.managedSetting, "providerInstances.codex");
+    }).pipe(
+      Effect.provide(
+        layerServerSettings({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: {
+            "providerInstances.codex": { value: { driver: "codex", enabled: true }, locked: true },
+          },
+        }),
+      ),
+    ),
+  );
+
   it.effect("lowers default runtime modes above the ceiling without rewriting them", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -2145,6 +2171,13 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
         })
         .pipe(Effect.flip);
       assert.equal(perProject.operation, "use-disallowed-provider");
+
+      // The client echoes a default instance that was running before it was configured.
+      yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId: ProviderInstanceId.make("cursor"),
+        instance: { driver: cursor, enabled: true },
+      });
 
       // Turning it off, or removing it, is still the user's call.
       yield* service.updateProviderInstance({
@@ -2316,7 +2349,7 @@ it.layer(NodeServices.layer)("server settings under a runtime mode ceiling", (it
       const userVariable = { name: "CLAUDE_CONFIG_DIR", value: "/tmp/allow-all", sensitive: false };
       const storedClaude = {
         driver: claude,
-        environment: [userVariable],
+        environment: [userVariable, { ...userVariable, value: "/tmp/later-wins" }],
         config: {
           binaryPath: "/tmp/wrapper",
           launchArgs: "--dangerously-skip-permissions",
@@ -2380,6 +2413,9 @@ it.layer(NodeServices.layer)("server settings under a runtime mode ceiling", (it
         })
         .pipe(Effect.flip);
       assert.equal(commandArgs.managedSetting, "providerInstances.acp_devin.config.commandArgs");
+
+      // Unrelated writes carry the stored instance through unchanged, duplicates included.
+      yield* service.updateSettings({ defaultAutoPull: true });
 
       // What the client was shown saves, with user-owned edits, and the stored values survive.
       yield* service.updateProviderInstance({
