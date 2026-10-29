@@ -196,8 +196,10 @@ class ReviewDiffCodeLayoutTest {
   @Test
   fun wordDiffHighlightsCoverTheMeasuredTextTheyMark() {
     val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
+    // Robolectric has no monospace-medium, so it falls back to a proportional face.
+    val proportional = DiffStyle.defaults(1f).copy(codeFontWeight = "medium")
     val fixtures = listOf(
-      Triple("go 1.25", DiffWordDiffRange(6, 7), DiffStyle.defaults(1f).copy(codeFontWeight = "medium")),
+      Triple("go 1.25", DiffWordDiffRange(6, 7), proportional),
       Triple("名前 = 1.25", DiffWordDiffRange(7, 9), DiffStyle.defaults(1f)),
     )
     for ((content, range, style) in fixtures) {
@@ -205,9 +207,12 @@ class ReviewDiffCodeLayoutTest {
       drawing.configureCodePaint(Color.BLACK, 0, style)
       val textLeft = drawing.textPaint.measureText(content, 0, range.start)
       val textRight = drawing.textPaint.measureText(content, 0, range.end)
-      val inked = inkedColumns { drawing.drawWordDiffRanges(it, line, null, 0f, 0, 40, style, oneLine) }
-      val label = "highlight of \"${content.substring(range.start, range.end)}\" in \"$content\" " +
-        "drawn at x=[${inked.first()},${inked.last() + 1}] but its text spans x=[$textLeft,$textRight]"
+      val inked = inkedColumns {
+        drawing.drawWordDiffRanges(it, line, null, 0f, 0, 40, style, oneLine)
+      }
+      val marked = content.substring(range.start, range.end)
+      val label = "highlight of \"$marked\" in \"$content\" drawn at " +
+        "x=[${inked.first()},${inked.last() + 1}] but its text spans x=[$textLeft,$textRight]"
       assertEquals(label, textLeft, inked.first().toFloat(), 1.5f)
       assertEquals(label, textRight, inked.last() + 1f, 1.5f)
     }
@@ -218,13 +223,18 @@ class ReviewDiffCodeLayoutTest {
     val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
     val style = DiffStyle.defaults(1f).copy(codeFontWeight = "medium")
     val tokens = listOf(DiffToken("return", null, 2), DiffToken(" 1.25", null, 0))
-    val line = row("return 1.25").copy(change = "delete", wordDiffRanges = listOf(DiffWordDiffRange(9, 11)))
+    val line = row("return 1.25").copy(
+      change = "delete",
+      wordDiffRanges = listOf(DiffWordDiffRange(9, 11)),
+    )
     drawing.configureCodePaint(Color.BLACK, 2, style)
     val keyword = drawing.textPaint.measureText("return")
     drawing.configureCodePaint(Color.BLACK, 0, style)
     val textLeft = keyword + drawing.textPaint.measureText(" 1.")
     val textRight = keyword + drawing.textPaint.measureText(" 1.25")
-    val inked = inkedColumns { drawing.drawWordDiffRanges(it, line, tokens, 0f, 0, 40, style, oneLine) }
+    val inked = inkedColumns {
+      drawing.drawWordDiffRanges(it, line, tokens, 0f, 0, 40, style, oneLine)
+    }
     assertEquals(textLeft, inked.first().toFloat(), 1.5f)
     assertEquals(textRight, inked.last() + 1f, 1.5f)
   }

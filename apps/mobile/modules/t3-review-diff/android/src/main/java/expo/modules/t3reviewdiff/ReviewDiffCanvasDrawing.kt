@@ -388,10 +388,13 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     row.wordDiffRanges.forEach { range ->
       lines.starts.forEachIndexed { line, lineStart ->
         val start = max(range.start, lineStart)
-        val end = min(range.end, lines.end(line, Int.MAX_VALUE))
+        val end = min(min(range.end, row.content.length), lines.end(line, Int.MAX_VALUE))
         if (end <= start) return@forEachIndexed
         val left = codeX + measureCode(row.content, tokens, style, lineStart, start)
-        val right = max(left + 2f * density, codeX + measureCode(row.content, tokens, style, lineStart, end))
+        val right = max(
+          left + 2f * density,
+          codeX + measureCode(row.content, tokens, style, lineStart, end),
+        )
         val lineTop = highlightTop + line * lines.height
         canvas.drawRoundRect(
           RectF(left, lineTop, right, lineTop + highlightHeight),
@@ -403,8 +406,14 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     }
   }
 
-  /** Advance drawCode gives columns [from]..[to] of one visual line, with each token run's own paint. */
-  private fun measureCode(content: String, tokens: List<DiffToken>?, style: DiffStyle, from: Int, to: Int): Float {
+  /** Advance drawCode gives columns [from]..[to] of one visual line, with each run's own paint. */
+  private fun measureCode(
+    content: String,
+    tokens: List<DiffToken>?,
+    style: DiffStyle,
+    from: Int,
+    to: Int
+  ): Float {
     if (tokens.isNullOrEmpty()) {
       configureCodePaint(theme.text, 0, style)
       return textPaint.measureText(content, from, to)
@@ -415,7 +424,11 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       val runEnd = runStart + run.content.length
       if (runEnd > from) {
         configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
-        width += textPaint.measureText(run.content, max(from, runStart) - runStart, min(to, runEnd) - runStart)
+        width += textPaint.measureText(
+          run.content,
+          max(from, runStart) - runStart,
+          min(to, runEnd) - runStart,
+        )
       }
       if (runEnd >= to) break
       runStart = runEnd
