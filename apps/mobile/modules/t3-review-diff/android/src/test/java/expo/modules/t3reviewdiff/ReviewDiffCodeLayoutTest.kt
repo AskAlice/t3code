@@ -194,6 +194,31 @@ class ReviewDiffCodeLayoutTest {
   }
 
   @Test
+  fun wordDiffHighlightsCoverTheMeasuredTextTheyMark() {
+    val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
+    val fixtures = listOf(
+      Triple("go 1.25", DiffWordDiffRange(6, 7), DiffStyle.defaults(1f).copy(codeFontWeight = "medium")),
+      Triple("名前 = 1.25", DiffWordDiffRange(7, 9), DiffStyle.defaults(1f)),
+    )
+    for ((content, range, style) in fixtures) {
+      val line = row(content).copy(change = "delete", wordDiffRanges = listOf(range))
+      drawing.configureCodePaint(Color.BLACK, 0, style)
+      val textLeft = drawing.textPaint.measureText(content, 0, range.start)
+      val textRight = drawing.textPaint.measureText(content, 0, range.end)
+      val bitmap = Bitmap.createBitmap(800, 40, Bitmap.Config.ARGB_8888)
+      drawing.drawWordDiffRanges(Canvas(bitmap), line, 0f, 0, 40, CodeLines(intArrayOf(0), 0))
+      val inked = (0 until bitmap.width).filter { x ->
+        (0 until bitmap.height).any { y -> Color.alpha(bitmap.getPixel(x, y)) != 0 }
+      }
+      bitmap.recycle()
+      val label = "highlight of \"${content.substring(range.start, range.end)}\" in \"$content\" " +
+        "drawn at x=[${inked.first()},${inked.last() + 1}] but its text spans x=[$textLeft,$textRight]"
+      assertEquals(label, textLeft, inked.first().toFloat(), 1.5f)
+      assertEquals(label, textRight, inked.last() + 1f, 1.5f)
+    }
+  }
+
+  @Test
   fun obsoletePreparationStopsBeforeWalkingTheRemainingRows() {
     val cache = CodeLayoutCache()
     val row = row("漢字".repeat(100))
