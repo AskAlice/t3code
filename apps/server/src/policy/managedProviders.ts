@@ -444,6 +444,28 @@ export function makeManagedProviders(
       if (vetted._tag === "Locked") return vetted;
       if (vetted.instance !== undefined) providerInstances[instanceId] = vetted.instance;
     }
+    // A project can switch an instance on for itself; that is enabling it too.
+    for (const [projectId, overrides] of Object.entries(next.projectSettingsOverrides)) {
+      const storedOverrides =
+        current.projectSettingsOverrides[projectId as keyof typeof current.projectSettingsOverrides]
+          ?.providerInstances;
+      for (const [instanceId, override] of Object.entries(overrides.providerInstances ?? {})) {
+        const driver =
+          next.providerInstances[instanceId as ProviderInstanceId]?.driver ??
+          ProviderDriverKind.make(instanceId);
+        if (
+          override.enabled === true &&
+          storedOverrides?.[instanceId as ProviderInstanceId]?.enabled !== true &&
+          !isDriverAllowed(driver)
+        ) {
+          return {
+            _tag: "Disallowed",
+            instanceId: instanceId as ProviderInstanceId,
+            label: labelFor(driver),
+          };
+        }
+      }
+    }
     return {
       _tag: "Allowed",
       settings: {

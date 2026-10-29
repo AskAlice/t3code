@@ -2015,6 +2015,15 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
         .pipe(Effect.flip);
       assert.equal(rejected.operation, "use-disallowed-provider");
       assert.equal(rejected.message, "Example Corp's policy does not allow the Cursor provider.");
+      // Switching it on for one project is enabling it too.
+      const perProject = yield* service
+        .updateSettings({
+          projectSettingsOverrides: {
+            [ProjectId.make("project-a")]: { providerInstances: { [cursorId]: { enabled: true } } },
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(perProject.operation, "use-disallowed-provider");
 
       // Turning it off, or removing it, is still the user's call.
       yield* service.updateProviderInstance({
