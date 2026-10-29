@@ -2173,6 +2173,82 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect(
+    "shows a UserPromptSubmit hook stop without presenting its status label as the reason",
+    () =>
+      Effect.gen(function* () {
+        const nativeThreadId = "prompt-hook-thread";
+        const nativeTurnId = "prompt-hook-turn";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "user-prompt-submit-hook-stop",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" }),
+              {
+                type: "emit_inbound",
+                label: "hook/completed",
+                frame: {
+                  method: "hook/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    run: {
+                      id: "user-prompt-submit:0:/codex-home/hooks.json",
+                      eventName: "userPromptSubmit",
+                      handlerType: "command",
+                      executionMode: "sync",
+                      scope: "turn",
+                      source: "user",
+                      sourcePath: "/codex-home/hooks.json",
+                      displayOrder: 0,
+                      status: "stopped",
+                      statusMessage: "Checking prompt policy",
+                      startedAt: 1782622441000,
+                      completedAt: 1782622441004,
+                      durationMs: 4,
+                      entries: [],
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("user-prompt-submit-hook-attempt"),
+            text: "work",
+          }),
+        );
+        yield* harness.firstTerminal;
+        const notices = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        );
+        assert.deepEqual(notices, ["UserPromptSubmit hook stopped the turn."]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect.each(["failed", "interrupted", "Stop"] as const)(
     "settles unfinished compaction on %s without changing completed compaction",
     (outcome) =>

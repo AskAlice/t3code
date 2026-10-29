@@ -547,11 +547,11 @@ function nonEmptyText(value: string | null | undefined, fallback: string): strin
 
 function codexHookStopMessage(run: CodexSchema.V2HookCompletedNotification__HookRunSummary) {
   const eventName = `${run.eventName.charAt(0).toUpperCase()}${run.eventName.slice(1)}`;
-  const reason =
-    run.entries
-      .flatMap((entry) => (entry.kind === "stop" ? (trimText(entry.text) ?? []) : []))
-      .join("\n") || trimText(run.statusMessage);
-  return reason === undefined
+  // statusMessage is the hook's in-progress label, never a stop reason.
+  const reason = run.entries
+    .flatMap((entry) => (entry.kind === "stop" ? (trimText(entry.text) ?? []) : []))
+    .join("\n");
+  return reason === ""
     ? `${eventName} hook stopped the turn.`
     : `${eventName} hook stopped the turn: ${reason}`;
 }
