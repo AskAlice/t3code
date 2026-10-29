@@ -2859,7 +2859,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
-        environment: options?.environment ?? {},
+        // Keeps transcript lookups off the developer's real ~/.claude.
+        environment: options?.environment ?? { CLAUDE_CONFIG_DIR: "/nonexistent/claude-config" },
         attachmentsDir,
         fileSystem,
         path: yield* Path.Path,
@@ -11058,11 +11059,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const configDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-claude-subagent-thinking-",
         });
-        // Claude Code writes <config>/projects/<cwd, non-alphanumerics as "-">/<session>/subagents.
+        // Claude derives the project directory from the cwd's realpath, truncated; only the session id finds it.
         const subagentsDir = NodePath.join(
           configDir,
           "projects",
-          "-workspace",
+          "-private-var-symlinked-workspace",
           WAKE_NATIVE_SESSION,
           "subagents",
         );
@@ -11205,6 +11206,274 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect("shows thinking once when SDK frames also forward it", () =>
     showsNativeSubagentTranscriptThinking(true),
+  );
+
+  // regression: #27116 transcript thinking lands after the tool call and reply it preceded
+  it.effect("orders transcript thinking before its own tool calls and the reply", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "a27116ordering";
+        const TOOL_USE_ID = "toolu-ordering-subagent";
+        const REPLY = "The sum is 6.";
+        const fileSystem = yield* FileSystem.FileSystem;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-subagent-ordering-",
+        });
+        const transcriptPath = NodePath.join(
+          configDir,
+          "projects",
+          "-p",
+          WAKE_NATIVE_SESSION,
+          "subagents",
+          `agent-${TASK_ID}.jsonl`,
+        );
+        const transcriptLine = (messageId: string, uuid: string, content: unknown) =>
+          JSON.stringify({
+            type: "assistant",
+            isSidechain: true,
+            agentId: TASK_ID,
+            sessionId: WAKE_NATIVE_SESSION,
+            timestamp: "2026-10-29T12:00:00.000Z",
+            uuid,
+            message: { role: "assistant", id: messageId, content },
+          }) + "\n";
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: { CLAUDE_CONFIG_DIR: configDir },
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-subagent-ordering"),
+            text: "Sum the numbers with a subagent.",
+            attachments: [],
+          }),
+        );
+        // No transcript exists yet when the subagent starts.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Sum numbers in files",
+            subagent_type: "general-purpose",
+            is_backgrounded: false,
+            task_type: "local_agent",
+            prompt: "Sum the files.",
+            uuid: "00000000-0000-4000-8000-000000027111",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // The SDK tool call outruns the transcript flush that holds its thinking.
+        for (const frame of makeSubagentAssistantFrames({
+          parentToolUseId: TOOL_USE_ID,
+          uuid: "subagent-line-tool",
+          messageId: "msg_1",
+          bashToolUseId: "toolu-ordering-bash",
+        })) {
+          yield* harness.offerAndWait(frame);
+        }
+        yield* fileSystem.makeDirectory(NodePath.dirname(transcriptPath), { recursive: true });
+        yield* fileSystem.writeFileString(
+          transcriptPath,
+          transcriptLine("msg_1", "subagent-line-thinking-a", [
+            { type: "thinking", thinking: "Thinking A", signature: "sig" },
+          ]) +
+            transcriptLine("msg_1", "subagent-line-tool", [
+              { type: "tool_use", id: "toolu-ordering-bash", name: "Bash", input: {} },
+            ]),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentToolResultFrame({
+            parentToolUseId: TOOL_USE_ID,
+            uuid: "subagent-line-tool-result",
+            toolUseId: "toolu-ordering-bash",
+          }),
+        );
+        // The subagent settles before its final message reaches the transcript.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            status: "completed",
+            output_file: "",
+            summary: REPLY,
+            uuid: "00000000-0000-4000-8000-000000027112",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* fileSystem.writeFileString(
+          transcriptPath,
+          transcriptLine("msg_2", "subagent-line-thinking-b", [
+            { type: "thinking", thinking: "Thinking B", signature: "sig" },
+          ]) + transcriptLine("msg_2", "subagent-line-reply", [{ type: "text", text: REPLY }]),
+          { flag: "a" },
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: TOOL_USE_ID,
+                  content: [{ type: "text", text: REPLY }],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000027113",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+
+        const childThreadId = subagentRouting(harness.events, []).childThreadId;
+        assert.isDefined(childThreadId);
+        // Both settles re-emit the reply; the second follows its transcript read.
+        yield* harness.until(
+          () =>
+            harness.events.filter(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.threadId === childThreadId,
+            ).length === 2,
+        );
+        const childItems = new Map<string, { ordinal: number; label: string }>();
+        for (const event of harness.events) {
+          if (event.type !== "turn_item.updated" || event.turnItem.threadId !== childThreadId) {
+            continue;
+          }
+          const item = event.turnItem;
+          childItems.set(String(item.id), {
+            ordinal: item.ordinal,
+            label: item.type === "reasoning" ? item.text : item.type,
+          });
+        }
+        assert.deepEqual(
+          [...childItems.values()]
+            .sort((left, right) => left.ordinal - right.ordinal)
+            .map((item) => item.label),
+          ["user_message", "Thinking A", "command_execution", "Thinking B", "assistant_message"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("shows only new transcript thinking for a subagent resumed after restart", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "a27116resumed";
+        const fileSystem = yield* FileSystem.FileSystem;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-subagent-resumed-",
+        });
+        const transcriptPath = NodePath.join(
+          configDir,
+          "projects",
+          "-p",
+          WAKE_NATIVE_SESSION,
+          "subagents",
+          `agent-${TASK_ID}.jsonl`,
+        );
+        const thinkingLine = (thinking: string) =>
+          JSON.stringify({
+            type: "assistant",
+            isSidechain: true,
+            agentId: TASK_ID,
+            sessionId: WAKE_NATIVE_SESSION,
+            uuid: `line-${thinking}`,
+            message: {
+              role: "assistant",
+              id: `msg-${thinking}`,
+              content: [{ type: "thinking", thinking, signature: "sig" }],
+            },
+          }) + "\n";
+        yield* fileSystem.makeDirectory(NodePath.dirname(transcriptPath), { recursive: true });
+        // An earlier server process already showed this thinking.
+        yield* fileSystem.writeFileString(transcriptPath, thinkingLine("Before restart"));
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: { CLAUDE_CONFIG_DIR: configDir },
+          subagentLaunchToolUseId: "toolu-original-launch",
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-subagent-resumed"),
+            text: "Continue the subagent.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg-resume",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "tool_use", id: "toolu-resume", name: "SendMessage", input: {} }],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000027121",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            tool_use_id: "toolu-resume",
+            description: "Continue",
+            subagent_type: "general-purpose",
+            is_backgrounded: false,
+            task_type: "local_agent",
+            prompt: "Continue.",
+            uuid: "00000000-0000-4000-8000-000000027122",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* fileSystem.writeFileString(transcriptPath, thinkingLine("After restart"), {
+          flag: "a",
+        });
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: TASK_ID,
+            tool_use_id: "toolu-resume",
+            description: "Thinking",
+            usage: { total_tokens: 100, tool_uses: 0, duration_ms: 1000 },
+            uuid: "00000000-0000-4000-8000-000000027123",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const reasoning = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "reasoning"
+              ? [event.turnItem.text]
+              : [],
+          );
+        yield* harness.until(() => reasoning().length > 0);
+        assert.deepEqual(reasoning(), ["After restart"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect.each([false, true])(
