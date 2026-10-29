@@ -83,7 +83,7 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
   it.effect("refuses nightly releases when the policy disallows them", () =>
     Effect.gen(function* () {
       const byChannel = yield* runWithPolicy(
-        { mode: "manual", allowNightly: false },
+        { mode: "auto", allowNightly: false },
         { channel: "nightly" },
       );
       const byVersion = yield* runWithPolicy(

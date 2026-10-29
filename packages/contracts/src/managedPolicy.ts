@@ -40,10 +40,10 @@ export const ManagedProviderLimits = Schema.Struct({
 export type ManagedProviderLimits = typeof ManagedProviderLimits.Type;
 
 /**
- * How T3 Code updates itself. `auto` is the default; `manual` checks but moves only when a
- * user asks; `off` never checks, for machines that get T3 Code through MDM.
+ * How T3 Code updates itself. `auto` is the default: it checks, and installs only when a user
+ * asks. `off` never checks, for machines that get T3 Code through MDM.
  */
-export const ManagedUpdatesMode = Schema.Literals(["auto", "manual", "off"]);
+export const ManagedUpdatesMode = Schema.Literals(["auto", "off"]);
 export type ManagedUpdatesMode = typeof ManagedUpdatesMode.Type;
 
 const HttpsUrl = TrimmedNonEmptyString.check(

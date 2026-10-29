@@ -178,13 +178,13 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
-  it.effect("lets a user start an update under manual, but only to stable without nightly", () =>
+  it.effect("lets a user start an update, but only to stable without nightly", () =>
     Effect.gen(function* () {
       const { selfUpdate, order } = yield* makeHarness({
         policy: {
           schemaVersion: 1,
           organization: "Example Corp",
-          limits: { updates: { mode: "manual", allowNightly: false } },
+          limits: { updates: { mode: "auto", allowNightly: false } },
         },
       });
       expect(

@@ -825,27 +825,6 @@ describe("DesktopUpdates under a managed policy", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("checks under manual but downloads only when asked", () => {
-    const harness = makeHarness({ policy: managed({ mode: "manual" }) });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        yield* TestClock.adjust("15 seconds");
-        assert.equal(harness.checkCount(), 1);
-
-        harness.emit("update-available", { version: "1.2.4" });
-        yield* flushCallbacks;
-        assert.equal((yield* updates.getState).status, "available");
-        assert.equal(harness.downloadCount(), 0);
-
-        assert.isTrue((yield* updates.download).accepted);
-        assert.equal(harness.downloadCount(), 1);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
   it.effect("updates from the administrator's feed", () => {
     const harness = makeHarness({
       env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
