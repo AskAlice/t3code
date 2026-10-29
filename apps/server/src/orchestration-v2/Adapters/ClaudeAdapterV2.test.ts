@@ -11047,6 +11047,141 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #27116 Claude Code forwards no subagent thinking; only its transcript has it
+  it.effect("shows a native subagent's transcript thinking while it runs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "a27116subagent";
+        const TOOL_USE_ID = "toolu-thinking-subagent";
+        const THINKING = "The first file holds a number; read the next one before summing.";
+        const fileSystem = yield* FileSystem.FileSystem;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-subagent-thinking-",
+        });
+        // Claude Code writes <config>/projects/<cwd, non-alphanumerics as "-">/<session>/subagents.
+        const subagentsDir = NodePath.join(
+          configDir,
+          "projects",
+          "-workspace",
+          WAKE_NATIVE_SESSION,
+          "subagents",
+        );
+        yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
+        const transcriptLine = (content: unknown, uuid: string, type = "assistant") =>
+          JSON.stringify({
+            type,
+            isSidechain: true,
+            agentId: TASK_ID,
+            sessionId: WAKE_NATIVE_SESSION,
+            timestamp: "2026-10-29T12:00:00.000Z",
+            uuid,
+            message: { role: type, id: "msg_subagent_1", content },
+          });
+        yield* fileSystem.writeFileString(
+          NodePath.join(subagentsDir, `agent-${TASK_ID}.jsonl`),
+          [
+            transcriptLine(
+              [{ type: "thinking", thinking: THINKING, signature: "sig" }],
+              "subagent-line-thinking",
+            ),
+            transcriptLine(
+              [
+                {
+                  type: "tool_use",
+                  id: "toolu-subagent-bash",
+                  name: "Bash",
+                  input: { command: "cat f1.txt" },
+                },
+              ],
+              "subagent-line-tool",
+            ),
+          ].join("\n") + "\n",
+        );
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: { CLAUDE_CONFIG_DIR: configDir },
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-subagent-thinking"),
+            text: "Sum the numbers with a subagent.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Sum numbers in files",
+            subagent_type: "general-purpose",
+            is_backgrounded: false,
+            task_type: "local_agent",
+            prompt: "Read f1.txt, f2.txt and f3.txt and sum them.",
+            uuid: "00000000-0000-4000-8000-000000027101",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Running Read first file",
+            subagent_type: "general-purpose",
+            usage: { total_tokens: 100, tool_uses: 1, duration_ms: 1000 },
+            last_tool_name: "Bash",
+            uuid: "00000000-0000-4000-8000-000000027102",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // The SDK frame carries only the tool call, as Claude Code sends it today.
+        for (const frame of makeSubagentAssistantFrames({
+          parentToolUseId: TOOL_USE_ID,
+          uuid: "00000000-0000-4000-8000-000000027103",
+          messageId: "msg_subagent_1",
+          bashToolUseId: "toolu-subagent-bash",
+        })) {
+          yield* harness.offerAndWait(frame);
+        }
+        // Events reach the harness in order, so everything emitted for task_progress is in by now.
+        yield* harness.until(() =>
+          subagentRouting(harness.events, ["toolu-subagent-bash"]).toolThreadIds.has(
+            "toolu-subagent-bash",
+          ),
+        );
+
+        const routing = subagentRouting(harness.events, ["toolu-subagent-bash"]);
+        const childThreadId = routing.childThreadId;
+        assert.isDefined(childThreadId);
+        assert.deepEqual(
+          [...(routing.toolThreadIds.get("toolu-subagent-bash") ?? [])],
+          [childThreadId],
+        );
+        const childReasoning = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "reasoning" &&
+          event.turnItem.threadId === childThreadId
+            ? [event.turnItem.text]
+            : [],
+        );
+        assert.deepEqual(
+          childReasoning,
+          [THINKING],
+          "the running subagent's child thread shows the thinking from its transcript",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([false, true])(
     "drops an idle start superseded by live completion, later resume %s",
     (resume) =>
