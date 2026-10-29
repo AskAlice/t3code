@@ -2070,6 +2070,109 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("shows why a PreCompact hook stopped the compaction turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "compact-thread";
+        const nativeTurnId = "compact-turn";
+        const stopReason = "Save a current task checkpoint before compaction.";
+        const transcript = makeCodexReplayTranscript({
+          scenario: "pre-compact-hook-stop",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "unused" }).slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "compact",
+              frame: {
+                id: 3,
+                method: "thread/compact/start",
+                params: { threadId: nativeThreadId },
+              },
+            },
+            { type: "emit_inbound", label: "compact", frame: { id: 3, result: {} } },
+            {
+              type: "emit_inbound",
+              label: "start",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "hook/completed",
+              frame: {
+                method: "hook/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  run: {
+                    id: "pre-compact:0:/codex-home/hooks.json",
+                    eventName: "preCompact",
+                    handlerType: "command",
+                    executionMode: "sync",
+                    scope: "turn",
+                    source: "user",
+                    sourcePath: "/codex-home/hooks.json",
+                    displayOrder: 0,
+                    status: "stopped",
+                    statusMessage: null,
+                    startedAt: 1782622441000,
+                    completedAt: 1782622441004,
+                    durationMs: 4,
+                    entries: [{ kind: "stop", text: stopReason }],
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.compactThread!(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("pre-compact-hook-attempt"),
+            text: "/compact",
+          }),
+        );
+        yield* harness.firstTerminal;
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "interrupted");
+        const notices = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "system_notice" &&
+          event.turnItem.providerTurnId === terminal?.providerTurnId
+            ? [event.turnItem.message]
+            : [],
+        );
+        assert.isTrue(
+          notices.some((message) => message.includes("PreCompact") && message.includes(stopReason)),
+          `expected a system notice naming the PreCompact hook and its stop reason, got ${JSON.stringify(notices)}`,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["failed", "interrupted", "Stop"] as const)(
     "settles unfinished compaction on %s without changing completed compaction",
     (outcome) =>
