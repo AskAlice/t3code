@@ -97,6 +97,10 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const LOCAL_OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
+  source: "local",
+  commandPath: "/usr/local/bin/omp-acp",
+});
 
 const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
@@ -812,6 +816,179 @@ describe("AcpAdapterV2", () => {
         Stream.runHead,
       );
       assert.equal(Option.getOrThrow(terminal).status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  // regression: #27054 oh-my-pi sends `q<i>` choices with a `q<i>__other` free-text companion
+  it.live("local oh-my-pi elicitation asks each question once and answers in its keys", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-omp-form-" });
+      const statusPath = path.join(directory, "status.json");
+      const choice = (title: string, labels: ReadonlyArray<string>) => ({
+        type: "string",
+        title,
+        oneOf: labels.map((label) => ({ const: label, title: label })),
+      });
+      const other = { type: "string", title: "Other (type your own)" };
+      const driver = ProviderDriverKind.make("acpRegistry");
+      const transcript = yield* decodeAcpReplayTranscript(
+        {
+          provider: driver,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: "omp-form",
+          entries: [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: { kind: "response", method: "session/new", result: { sessionId: "omp" } },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "request",
+                method: "elicitation/create",
+                params: {
+                  mode: "form",
+                  sessionId: "omp",
+                  message: "Answer 2 questions",
+                  requestedSchema: {
+                    type: "object",
+                    properties: {
+                      q0: choice("What is your favorite color?", ["Red", "Blue", "Green"]),
+                      q0__other: other,
+                      q1: choice("What is your favorite fruit?", ["Apple", "Banana", "Cherry"]),
+                      q1__other: other,
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "response",
+                method: "elicitation/create",
+                // oh-my-pi reads a typed answer only from `q<i>__other` and a pick only from `q<i>`.
+                result: { action: "accept", content: { q0: "Blue", q1__other: "Mango" } },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            { type: "runtime_exit", status: "success" },
+          ],
+        },
+        driver,
+      );
+      const instanceId = ProviderInstanceId.make("omp-form-test");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        settings: LOCAL_OMP_SETTINGS,
+        environment: {},
+        makeRuntime: makeAcpReplayRuntime({
+          transcript,
+          statusPath,
+          fileSystem,
+          scriptPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+          ),
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+        ),
+      );
+      const threadId = ThreadId.make("omp-form-thread");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: directory,
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        providerSessionId: ProviderSessionId.make("omp-form-session"),
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const item = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (item.type !== "turn_item.updated" || item.turnItem.type !== "user_input_request")
+        return yield* Effect.die("Expected oh-my-pi question");
+      const questions = item.turnItem.questions;
+      assert.deepEqual(
+        questions.map((question) => ({
+          question: question.question,
+          options: question.options.map((option) => option.label),
+        })),
+        [
+          { question: "What is your favorite color?", options: ["Red", "Blue", "Green"] },
+          { question: "What is your favorite fruit?", options: ["Apple", "Banana", "Cherry"] },
+        ],
+      );
+      yield* runtime.respondToRuntimeRequest({
+        requestId: item.turnItem.requestId,
+        answers: { [questions[0]!.id]: "Blue", [questions[1]!.id]: "Mango" },
+      });
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.equal(
+        Option.getOrThrow(terminal).status,
+        "completed",
+        "the elicitation response must match what oh-my-pi decodes",
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
