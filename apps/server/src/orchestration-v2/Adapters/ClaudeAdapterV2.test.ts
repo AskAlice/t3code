@@ -11048,7 +11048,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   // regression: #27116 Claude Code forwards no subagent thinking; only its transcript has it
-  it.effect("shows a native subagent's transcript thinking while it runs", () =>
+  const showsNativeSubagentTranscriptThinking = (sdkForwardsThinking: boolean) =>
     Effect.scoped(
       Effect.gen(function* () {
         const TASK_ID = "a27116subagent";
@@ -11125,6 +11125,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
+        if (sdkForwardsThinking) {
+          // Older Claude Code forwards the same transcript line, with its uuid, as an SDK frame.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                model: "claude-sonnet-4-6",
+                id: "msg_subagent_1",
+                type: "message",
+                role: "assistant",
+                content: [{ type: "thinking", thinking: THINKING, signature: "sig" }],
+              },
+              parent_tool_use_id: TOOL_USE_ID,
+              uuid: "subagent-line-thinking",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
         yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "system",
@@ -11179,7 +11197,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
-    ),
+    );
+
+  it.effect("shows a native subagent's transcript thinking while it runs", () =>
+    showsNativeSubagentTranscriptThinking(false),
+  );
+
+  it.effect("shows thinking once when SDK frames also forward it", () =>
+    showsNativeSubagentTranscriptThinking(true),
   );
 
   it.effect.each([false, true])(
