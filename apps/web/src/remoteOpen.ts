@@ -54,7 +54,7 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  /** The environment's saved routes, in-use route first. */
+  /** The environment's saved routes, preferred route first. */
   readonly routes: ReadonlyArray<ConnectionRoute>;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;

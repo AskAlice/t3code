@@ -157,7 +157,7 @@ describe("resolveRemoteOpenState", () => {
       ).toEqual({ mode: "remote-unavailable" });
     }
   });
-  it("uses a saved SSH route's alias while a Tailscale route is in use", () => {
+  it("uses a saved SSH route's alias when a Tailscale route is preferred", () => {
     const target = new BearerConnectionTarget({
       environmentId,
       label: "sol",
