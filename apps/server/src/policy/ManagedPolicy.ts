@@ -98,8 +98,15 @@ function summarizeLimits(
   document: ManagedPolicyDocument,
   lockedInstanceFields: Readonly<Record<string, ReadonlyArray<string>>>,
 ): LimitsSummary {
-  const { maxRuntimeMode, clients, webhookTasks, telemetry, browserCookieImport, providers } =
-    document.limits ?? {};
+  const {
+    maxRuntimeMode,
+    clients,
+    webhookTasks,
+    telemetry,
+    browserCookieImport,
+    providers,
+    updates,
+  } = document.limits ?? {};
   const connect = ManagedLimits.allowsConnect({ document });
   return {
     ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
@@ -118,6 +125,7 @@ function summarizeLimits(
             ...(Object.keys(lockedInstanceFields).length === 0 ? {} : { lockedInstanceFields }),
           },
         }),
+    ...(updates === undefined ? {} : { updates }),
   };
 }
 

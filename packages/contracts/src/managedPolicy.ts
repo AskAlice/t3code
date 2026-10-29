@@ -15,6 +15,52 @@ export const ManagedPolicySetting = Schema.Struct({
 });
 export type ManagedPolicySetting = typeof ManagedPolicySetting.Type;
 
+/**
+ * Fields an administrator pins on every instance of one driver, merged over the user's instance
+ * when settings are read. `binaryPath` and `launchArgs` land in the driver's `config`, so a driver
+ * without that config field rejects the policy. `locked: false` fills only what the user left empty.
+ */
+export const ManagedProviderInstance = Schema.Struct({
+  locked: Schema.Boolean,
+  environment: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ name: ProviderInstanceEnvironmentVariableName, value: Schema.String }),
+    ),
+  ),
+  binaryPath: Schema.optionalKey(TrimmedNonEmptyString),
+  launchArgs: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ManagedProviderInstance = typeof ManagedProviderInstance.Type;
+
+export const ManagedProviderLimits = Schema.Struct({
+  /** Only these drivers run; instances of any other driver show as unavailable. */
+  allowedDrivers: Schema.optionalKey(Schema.Array(ProviderDriverKind)),
+  instances: Schema.optionalKey(Schema.Record(ProviderDriverKind, ManagedProviderInstance)),
+});
+export type ManagedProviderLimits = typeof ManagedProviderLimits.Type;
+
+/**
+ * How T3 Code updates itself. `auto` is the default; `manual` checks but moves only when a
+ * user asks; `off` never checks, for machines that get T3 Code through MDM.
+ */
+export const ManagedUpdatesMode = Schema.Literals(["auto", "manual", "off"]);
+export type ManagedUpdatesMode = typeof ManagedUpdatesMode.Type;
+
+const HttpsUrl = TrimmedNonEmptyString.check(
+  Schema.makeFilter((value: string) => /^https:\/\/[^\s/]+/i.test(value.trim()), {
+    expected: "an https URL",
+  }),
+);
+
+export const ManagedUpdatesPolicy = Schema.Struct({
+  mode: ManagedUpdatesMode,
+  /** A generic electron-updater feed the desktop app updates from instead of GitHub. */
+  feedUrl: Schema.optionalKey(HttpsUrl),
+  /** `false` makes the nightly channel unavailable. */
+  allowNightly: Schema.optionalKey(Schema.Boolean),
+});
+export type ManagedUpdatesPolicy = typeof ManagedUpdatesPolicy.Type;
+
 /** A kind of client the server may accept, mapped onto `ServerAuthPolicy`. */
 export const ManagedPolicyClient = Schema.Literals(["desktop", "local-browser", "remote"]);
 export type ManagedPolicyClient = typeof ManagedPolicyClient.Type;
@@ -35,6 +81,7 @@ export const ManagedPolicyLimits = Schema.Struct({
   telemetry: Schema.optionalKey(Schema.Boolean),
   browserCookieImport: Schema.optionalKey(Schema.Boolean),
   providers: Schema.optionalKey(ManagedProviderLimits),
+  updates: Schema.optionalKey(ManagedUpdatesPolicy),
 });
 export type ManagedPolicyLimits = typeof ManagedPolicyLimits.Type;
 
@@ -60,32 +107,9 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
       ),
     }),
   ),
+  updates: Schema.optionalKey(ManagedUpdatesPolicy),
 });
 export type ManagedPolicySummaryLimits = typeof ManagedPolicySummaryLimits.Type;
-
-/**
- * Fields an administrator pins on every instance of one driver, merged over the user's instance
- * when settings are read. `binaryPath` and `launchArgs` land in the driver's `config`, so a driver
- * without that config field rejects the policy. `locked: false` fills only what the user left empty.
- */
-export const ManagedProviderInstance = Schema.Struct({
-  locked: Schema.Boolean,
-  environment: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({ name: ProviderInstanceEnvironmentVariableName, value: Schema.String }),
-    ),
-  ),
-  binaryPath: Schema.optionalKey(TrimmedNonEmptyString),
-  launchArgs: Schema.optionalKey(TrimmedNonEmptyString),
-});
-export type ManagedProviderInstance = typeof ManagedProviderInstance.Type;
-
-export const ManagedProviderLimits = Schema.Struct({
-  /** Only these drivers run; instances of any other driver show as unavailable. */
-  allowedDrivers: Schema.optionalKey(Schema.Array(ProviderDriverKind)),
-  instances: Schema.optionalKey(Schema.Record(ProviderDriverKind, ManagedProviderInstance)),
-});
-export type ManagedProviderLimits = typeof ManagedProviderLimits.Type;
 
 /**
  * The machine-wide policy file an administrator deploys. Decoded with excess properties
@@ -112,6 +136,11 @@ export const ManagedPolicySummary = Schema.Struct({
   limits: Schema.optionalKey(ManagedPolicySummaryLimits),
 });
 export type ManagedPolicySummary = typeof ManagedPolicySummary.Type;
+
+/** The message every surface shows when the policy stops an update. */
+export function managedUpdatesMessage(organization: string): string {
+  return `${organization} manages T3 Code updates.`;
+}
 
 /** Whether `path` is locked itself, sits inside a locked setting, or contains one. */
 export function isManagedSettingPath(

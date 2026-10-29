@@ -201,4 +201,28 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.include(reasons[2], "launchArgs");
     }),
   );
+
+  it.effect(
+    "tells clients how updates are managed and refuses an update feed it cannot trust",
+    () =>
+      Effect.gen(function* () {
+        const base = { schemaVersion: 1, organization: "Example Corp" };
+        const updates = {
+          mode: "manual" as const,
+          feedUrl: "https://updates.example/t3",
+          allowNightly: false,
+        };
+        const policy = yield* loadFrom(JSON.stringify({ ...base, limits: { updates } }));
+        assert.deepEqual(policy.summary?.limits, { updates });
+        for (const invalid of [
+          { mode: "manual", feedUrl: "http://updates.example/t3" },
+          { mode: "sometimes" },
+          { mode: "auto", pinVersion: "1.2.3" },
+        ]) {
+          yield* loadFrom(JSON.stringify({ ...base, limits: { updates: invalid } })).pipe(
+            Effect.flip,
+          );
+        }
+      }),
+  );
 });
