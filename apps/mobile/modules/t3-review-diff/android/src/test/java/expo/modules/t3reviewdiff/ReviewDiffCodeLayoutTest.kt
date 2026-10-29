@@ -205,17 +205,28 @@ class ReviewDiffCodeLayoutTest {
       drawing.configureCodePaint(Color.BLACK, 0, style)
       val textLeft = drawing.textPaint.measureText(content, 0, range.start)
       val textRight = drawing.textPaint.measureText(content, 0, range.end)
-      val bitmap = Bitmap.createBitmap(800, 40, Bitmap.Config.ARGB_8888)
-      drawing.drawWordDiffRanges(Canvas(bitmap), line, 0f, 0, 40, CodeLines(intArrayOf(0), 0))
-      val inked = (0 until bitmap.width).filter { x ->
-        (0 until bitmap.height).any { y -> Color.alpha(bitmap.getPixel(x, y)) != 0 }
-      }
-      bitmap.recycle()
+      val inked = inkedColumns { drawing.drawWordDiffRanges(it, line, null, 0f, 0, 40, style, oneLine) }
       val label = "highlight of \"${content.substring(range.start, range.end)}\" in \"$content\" " +
         "drawn at x=[${inked.first()},${inked.last() + 1}] but its text spans x=[$textLeft,$textRight]"
       assertEquals(label, textLeft, inked.first().toFloat(), 1.5f)
       assertEquals(label, textRight, inked.last() + 1f, 1.5f)
     }
+  }
+
+  @Test
+  fun wordDiffHighlightsMeasureEachTokenRunWithItsOwnFont() {
+    val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
+    val style = DiffStyle.defaults(1f).copy(codeFontWeight = "medium")
+    val tokens = listOf(DiffToken("return", null, 2), DiffToken(" 1.25", null, 0))
+    val line = row("return 1.25").copy(change = "delete", wordDiffRanges = listOf(DiffWordDiffRange(9, 11)))
+    drawing.configureCodePaint(Color.BLACK, 2, style)
+    val keyword = drawing.textPaint.measureText("return")
+    drawing.configureCodePaint(Color.BLACK, 0, style)
+    val textLeft = keyword + drawing.textPaint.measureText(" 1.")
+    val textRight = keyword + drawing.textPaint.measureText(" 1.25")
+    val inked = inkedColumns { drawing.drawWordDiffRanges(it, line, tokens, 0f, 0, 40, style, oneLine) }
+    assertEquals(textLeft, inked.first().toFloat(), 1.5f)
+    assertEquals(textRight, inked.last() + 1f, 1.5f)
   }
 
   @Test
@@ -242,6 +253,18 @@ class ReviewDiffCodeLayoutTest {
       displayed,
       cache.layout(listOf(row), emptyMap(), paint, style, theme, 280).lines(row)
     )
+  }
+
+  private val oneLine = CodeLines(intArrayOf(0), 0)
+
+  private fun inkedColumns(draw: (Canvas) -> Unit): List<Int> {
+    val bitmap = Bitmap.createBitmap(800, 40, Bitmap.Config.ARGB_8888)
+    draw(Canvas(bitmap))
+    val inked = (0 until bitmap.width).filter { x ->
+      (0 until bitmap.height).any { y -> Color.alpha(bitmap.getPixel(x, y)) != 0 }
+    }
+    bitmap.recycle()
+    return inked
   }
 
   private fun row(content: String) = DiffRow(
