@@ -422,6 +422,19 @@ it.layer(
         assert.strictEqual(status.auth.status, "unknown");
       }),
     );
+
+    it.effect("returns ready when app-server answers slowly but correctly", () =>
+      Effect.gen(function* () {
+        const fiber = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.sleep("25 seconds").pipe(Effect.as(makeCodexProbeSnapshot())),
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("25 seconds");
+        const status = yield* Fiber.join(fiber);
+
+        assert.strictEqual(status.message, undefined);
+        assert.strictEqual(status.status, "ready");
+      }),
+    );
   });
 
   describe("ProviderRegistry.layer", () => {
