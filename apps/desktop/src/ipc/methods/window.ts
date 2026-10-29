@@ -16,7 +16,7 @@ import {
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { managedPolicyPath, readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
+import { readManagedPolicy } from "@t3tools/shared/managedPolicyFile";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -83,17 +83,15 @@ export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.instal
     const { platform } = yield* DesktopEnvironment.DesktopEnvironment;
     const enabled =
       isRelayTracingEnabled(yield* HostProcess.Environment) &&
-      (yield* readManagedPolicyFile(managedPolicyPath(platform)).pipe(
-        Effect.map((document) => document?.limits?.telemetry !== false),
+      (yield* readManagedPolicy(platform).pipe(
+        Effect.map((found) => found?.document.limits?.telemetry !== false),
         Effect.orElseSucceed(() => false),
       ));
     yield* ipc.handleSync(
       DesktopIpc.makeSyncIpcMethod({
         channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
         result: Schema.Boolean,
-        handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
-          return enabled;
-        }),
+        handler: () => Effect.succeed(enabled),
       }),
     );
   },

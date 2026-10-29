@@ -4,7 +4,11 @@ import type {
   BrowserImportSource,
   BrowserImportUnavailableReason,
 } from "@t3tools/contracts";
-import { BrowserImportFailureReason, managedPolicyDeniedMessage } from "@t3tools/contracts";
+import {
+  BrowserImportFailureReason,
+  type ManagedPolicyDocument,
+  managedPolicyDeniedMessage,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type { Session } from "electron";
 import * as Effect from "effect/Effect";
@@ -16,7 +20,7 @@ import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { managedPolicyPath, readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
+import { type ManagedPolicyFileError, readManagedPolicy } from "@t3tools/shared/managedPolicyFile";
 
 import * as BrowserSession from "../BrowserSession.ts";
 import { ChromiumCookieReadError, readChromiumCookies } from "./ChromiumCookies.ts";
@@ -70,16 +74,20 @@ export class BrowserImportPolicyError extends Schema.TaggedError<BrowserImportPo
  * read or decoded denies the import: cookies are credentials, and the server refuses to start on
  * the same file anyway.
  */
-export const checkBrowserImportPolicy = Effect.fn("BrowserImport.checkPolicy")(function* (
-  policyPath: string,
+export const checkBrowserImportPolicy = Effect.fn("BrowserImport.checkPolicy")(function* <R>(
+  readPolicy: Effect.Effect<
+    { readonly source: string; readonly document: ManagedPolicyDocument } | undefined,
+    ManagedPolicyFileError,
+    R
+  >,
 ) {
-  const document = yield* readManagedPolicyFile(policyPath).pipe(
-    Effect.mapError((cause) => new BrowserImportPolicyError({ policyPath, cause })),
+  const policy = yield* readPolicy.pipe(
+    Effect.mapError((cause) => new BrowserImportPolicyError({ policyPath: cause.path, cause })),
   );
-  if (document?.limits?.browserCookieImport === false) {
+  if (policy?.document.limits?.browserCookieImport === false) {
     return yield* new BrowserImportPolicyError({
-      policyPath,
-      organization: document.organization,
+      policyPath: policy.source,
+      organization: policy.document.organization,
     });
   }
 });
@@ -214,7 +222,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
     readonly persistent: boolean;
     readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
   }) {
-    yield* checkBrowserImportPolicy(managedPolicyPath(platform)).pipe(
+    yield* checkBrowserImportPolicy(readManagedPolicy(platform)).pipe(
       Effect.provide(platformServices),
     );
     const definition = BROWSER_IMPORT_SOURCES.find(

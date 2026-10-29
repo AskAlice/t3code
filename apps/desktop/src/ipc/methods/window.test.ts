@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
 const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
@@ -192,16 +193,20 @@ describe("installRelayTelemetryEnabled", () => {
         on: (channel, listener) => void listeners.set(channel, listener),
       };
       yield* installRelayTelemetryEnabled().pipe(
-        Effect.provide(DesktopIpc.layer(ipcMain)),
         Effect.provideService(HostProcess.Environment, env),
         Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
           platform: "linux",
         } as DesktopEnvironment.DesktopEnvironment["Service"]),
         Effect.provide(
-          FileSystem.layerNoop({
-            exists: () => Effect.promise(() => Promise.resolve(policyFile !== undefined)),
-            readFileString: () => Effect.promise(() => Promise.resolve(policyFile ?? "")),
-          }),
+          Layer.mergeAll(
+            DesktopIpc.layer(ipcMain),
+            // Linux has no platform policy source, so nothing is spawned.
+            Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({}),
+            FileSystem.layerNoop({
+              exists: () => Effect.promise(() => Promise.resolve(policyFile !== undefined)),
+              readFileString: () => Effect.promise(() => Promise.resolve(policyFile ?? "")),
+            }),
+          ),
         ),
       );
       const event = { returnValue: undefined as unknown };

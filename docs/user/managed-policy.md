@@ -4,16 +4,26 @@ A managed policy lets an administrator configure T3 Code for every user on a mac
 file with your usual device management tool (Jamf, Kandji, Intune, Ansible). The T3 Code server
 on that machine follows it, whichever app connects: desktop, the browser, or mobile.
 
-## Where the file goes
+## Where the policy goes
 
-| OS      | Path                                              |
-| ------- | ------------------------------------------------- |
-| macOS   | `/Library/Application Support/T3Code/policy.json` |
-| Linux   | `/etc/t3code/policy.json`                         |
-| Windows | `C:\ProgramData\T3Code\policy.json`               |
+Deploy the policy one way per machine:
 
-Make the file writable only by administrators. T3 Code reads it when the server starts, so restart
-the app after you deploy or change it. Without the file, every setting belongs to the user.
+| OS      | Native                                                              | File                                              |
+| ------- | ------------------------------------------------------------------- | ------------------------------------------------- |
+| macOS   | Configuration profile for `com.t3tools.t3code`                      | `/Library/Application Support/T3Code/policy.json` |
+| Windows | `Policy` string value under `HKLM\SOFTWARE\Policies\T3Tools\T3Code` | `C:\ProgramData\T3Code\policy.json`               |
+| Linux   |                                                                     | `/etc/t3code/policy.json`                         |
+
+- **macOS profile:** add a custom settings payload for `com.t3tools.t3code` whose keys are the
+  policy's top-level keys (`schemaVersion`, `organization`, `settings`, `limits`), with nested
+  dictionaries for the rest. Install it as a device profile; user profiles are ignored.
+- **Windows registry:** set `Policy` (`REG_SZ`) to the whole policy as one line of JSON, from
+  Group Policy Preferences, an Intune script, or `reg add`.
+- **File:** make it writable only by administrators.
+
+T3 Code refuses to start if a machine has both a native policy and a file. It reads the policy when
+the server starts, so restart the app after you deploy or change it. Without a policy, every
+setting belongs to the user.
 
 ## Settings
 
@@ -125,7 +135,7 @@ variable that routes Claude through Amazon Bedrock or a base URL for a company g
 users cannot change the fields you set; with `"locked": false` they fill only fields the user left
 empty. A Codex pin that is locked, or set under `maxRuntimeMode`, also rules out
 [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), whose runtime would skip it. The
-policy file is readable by every user on the machine, so do not put credentials in
+policy is readable by every user on the machine, so do not put credentials in
 it.
 
 ### Updates
@@ -152,4 +162,4 @@ T3 Code before you deploy the policy that uses them.
 The policy controls what T3 Code does. Agents still run through each provider's own CLI, which a
 user can also run outside T3 Code. To restrict those CLIs, use their own managed configuration, such
 as Claude Code's managed settings. A user with administrator rights on the machine can edit or
-remove the policy file.
+remove the policy.

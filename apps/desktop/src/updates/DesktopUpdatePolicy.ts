@@ -10,7 +10,7 @@ import {
   type ManagedPolicyDocument,
   type ManagedUpdatesMode,
 } from "@t3tools/contracts";
-import { managedPolicyPath, readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
+import { readManagedPolicy } from "@t3tools/shared/managedPolicyFile";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -52,30 +52,33 @@ const { logInfo, logError } = DesktopObservability.makeComponentLogger("desktop-
 
 const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const path = managedPolicyPath(environment.platform);
-  return yield* readManagedPolicyFile(path).pipe(
-    Effect.map(resolveUpdatePolicy),
-    Effect.tap((policy) =>
+  return yield* readManagedPolicy(environment.platform).pipe(
+    Effect.map((found) => ({
+      source: found?.source,
+      policy: resolveUpdatePolicy(found?.document),
+    })),
+    Effect.tap(({ source, policy }) =>
       policy.message === null
         ? Effect.void
         : logInfo("managed policy restricts updates", {
-            path,
+            source,
             mode: policy.mode,
             customFeed: policy.feedUrl !== undefined,
             allowNightly: policy.allowNightly,
           }),
     ),
+    Effect.map(({ policy }) => policy),
     Effect.catchTags({
       ManagedPolicyFileError: (error) =>
         logError("updates are off because the managed policy cannot be used", {
-          path,
+          path: error.path,
           reason: error.reason,
         }).pipe(
           Effect.as<UpdatePolicy>({
             mode: "off",
             feedUrl: undefined,
             allowNightly: false,
-            message: `Updates are off because the managed policy at ${path} is invalid. Contact your administrator.`,
+            message: `Updates are off because the managed policy at ${error.path} is invalid. Contact your administrator.`,
           }),
         ),
     }),

@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import * as BrowserSession from "../BrowserSession.ts";
+import { readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
 import * as BrowserImport from "./BrowserImport.ts";
 import { BROWSER_IMPORT_SOURCES, sourcePathContext } from "./Sources.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -124,7 +125,10 @@ describe("BrowserImport.checkBrowserImportPolicy", () => {
           const policyPath = `${dir}/policy.json`;
           yield* fileSystem.remove(policyPath, { force: true });
           if (contents !== undefined) yield* fileSystem.writeFileString(policyPath, contents);
-          return yield* BrowserImport.checkBrowserImportPolicy(policyPath).pipe(
+          const readPolicy = readManagedPolicyFile(policyPath).pipe(
+            Effect.map((document) => document && { source: policyPath, document }),
+          );
+          return yield* BrowserImport.checkBrowserImportPolicy(readPolicy).pipe(
             Effect.match({ onFailure: (error) => error.message, onSuccess: () => "allowed" }),
           );
         });

@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ManagedPolicyFileError,
   managedPolicyPath,
+  readManagedPolicy,
   readManagedPolicyFile,
 } from "@t3tools/shared/managedPolicyFile";
 
@@ -153,8 +154,16 @@ const make = Effect.gen(function* () {
         )
       : Option.none<string>();
   const platform = yield* HostProcess.Platform;
-  const path = Option.getOrElse(devPath, () => managedPolicyPath(platform));
-  const policy = yield* load(path);
+  const policy = yield* Option.match(devPath, {
+    onSome: load,
+    onNone: () =>
+      readManagedPolicy(platform).pipe(
+        Effect.flatMap((found) =>
+          fromDocument(found?.source ?? managedPolicyPath(platform), found?.document),
+        ),
+      ),
+  });
+  const path = policy.path;
   if (policy.summary !== undefined) {
     yield* Effect.logInfo("Managed policy applies.", {
       path,
