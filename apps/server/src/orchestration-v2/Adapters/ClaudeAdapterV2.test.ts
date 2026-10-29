@@ -250,6 +250,20 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.equal(options.extraArgs?.["thinking-display"], "summarized");
   });
 
+  it("asks Claude to forward subagent thinking and text, not just tool calls", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-subagent-thinking",
+      resume: false,
+      cwd: "/workspace",
+      settings: DEFAULT_CLAUDE_SETTINGS,
+    });
+    assert.isTrue(
+      options.forwardSubagentText,
+      "without forwardSubagentText the SDK drops subagent thinking and text blocks",
+    );
+  });
+
   it.each([
     ["--permission-mode acceptEdits", "acceptEdits"],
     ["--dangerously-skip-permissions", "bypassPermissions"],
