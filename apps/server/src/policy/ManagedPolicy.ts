@@ -126,7 +126,15 @@ function summarizeLimits(
             ...(Object.keys(lockedInstanceFields).length === 0 ? {} : { lockedInstanceFields }),
           },
         }),
-    ...(updates === undefined ? {} : { updates }),
+    // A feed URL can carry a token, and no client needs it.
+    ...(updates === undefined
+      ? {}
+      : {
+          updates: {
+            mode: updates.mode,
+            ...(updates.allowNightly === undefined ? {} : { allowNightly: updates.allowNightly }),
+          },
+        }),
   };
 }
 

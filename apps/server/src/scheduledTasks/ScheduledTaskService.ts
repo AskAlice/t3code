@@ -1294,6 +1294,12 @@ export const layer = Layer.effect(
     )(function* (input) {
       const existing = yield* loadTask(input.id);
       if (existing.enabled === input.enabled) return { task: existing };
+      const modeDenial = input.enabled
+        ? managedRuntimeModeDenial(managedPolicy.summary, existing.runtimeMode)
+        : undefined;
+      if (modeDenial !== undefined) {
+        return yield* taskError(modeDenial, { taskId: input.id });
+      }
       const now = yield* localNow;
       const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
       // RETURNING so a task deleted between the load and this UPDATE is a

@@ -161,7 +161,7 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
-import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
@@ -274,6 +274,15 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
   override get message(): string {
     return `Thread ${this.threadId} now runs in ${this.runtimeMode}/${this.interactionMode} mode, above what this caller may change.`;
   }
+}
+
+const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
+
+/** The ceiling refusal under however many dispatch errors wrapped it on the way out. */
+function runtimePolicyCeilingCause(error: unknown) {
+  let current = error;
+  while (isOrchestratorDispatchError(current)) current = current.cause;
+  return isRuntimePolicyAboveCeilingError(current) ? current : undefined;
 }
 
 export class OrchestratorRuntimeModeAboveCeilingError extends Schema.TaggedError<OrchestratorRuntimeModeAboveCeilingError>()(
@@ -12992,6 +13001,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause._tag === "OrchestratorRuntimeModeAboveCeilingError"
           ) {
             return yield* cause;
+          }
+          // Resolving a turn's policy refuses the same way, from inside the decision.
+          const ceiling = runtimePolicyCeilingCause(cause);
+          if (ceiling !== undefined) {
+            const { threadId, runtimeMode, maxRuntimeMode, organization } = ceiling;
+            return yield* new OrchestratorRuntimeModeAboveCeilingError({
+              commandId: command.commandId,
+              threadId,
+              refused: "turn",
+              runtimeMode,
+              maxRuntimeMode,
+              organization,
+            });
           }
           const rejectedAt = yield* DateTime.now;
           const receipt = yield* eventSink

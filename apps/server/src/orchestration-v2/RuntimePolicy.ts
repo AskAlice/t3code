@@ -51,6 +51,8 @@ export class RuntimePolicyAboveCeilingError extends Schema.TaggedError<RuntimePo
   }
 }
 
+export const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingError);
+
 export const RuntimePolicyV2Error = Schema.Union([
   RuntimePolicyResolveError,
   RuntimePolicyAboveCeilingError,
@@ -97,6 +99,44 @@ function providerRuntimeMode(
     : "approval-required";
 }
 
+const refuseAboveCeiling = (
+  managedPolicy: ServerSettings.ServerSettingsService["Service"]["managedPolicy"],
+  thread: OrchestrationV2AppThread,
+) => {
+  const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
+  return managedPolicy !== undefined &&
+    maxRuntimeMode !== undefined &&
+    isRuntimeModeAbove(thread.runtimeMode, maxRuntimeMode)
+    ? Effect.fail(
+        new RuntimePolicyAboveCeilingError({
+          threadId: thread.id,
+          runtimeMode: thread.runtimeMode,
+          maxRuntimeMode,
+          organization: managedPolicy.organization,
+        }),
+      )
+    : Effect.void;
+};
+
+/** Lays the policy's ceiling over another runtime policy, as `layerFromProjectStore` does. */
+export const layerEnforcingCeiling: Layer.Layer<
+  RuntimePolicyV2,
+  never,
+  RuntimePolicyV2 | ServerSettings.ServerSettingsService
+> = Layer.effect(
+  RuntimePolicyV2,
+  Effect.gen(function* () {
+    const base = yield* RuntimePolicyV2;
+    const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
+    return RuntimePolicyV2.of({
+      resolve: Effect.fn("RuntimePolicyV2.resolveWithinCeiling")(function* (input) {
+        yield* refuseAboveCeiling(managedPolicy, input.thread);
+        return yield* base.resolve(input);
+      }),
+    });
+  }),
+);
+
 export const layerFromProjectStore: Layer.Layer<
   RuntimePolicyV2,
   never,
@@ -113,18 +153,7 @@ export const layerFromProjectStore: Layer.Layer<
     const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
-        if (
-          managedPolicy !== undefined &&
-          maxRuntimeMode !== undefined &&
-          isRuntimeModeAbove(input.thread.runtimeMode, maxRuntimeMode)
-        ) {
-          return yield* new RuntimePolicyAboveCeilingError({
-            threadId: input.thread.id,
-            runtimeMode: input.thread.runtimeMode,
-            maxRuntimeMode,
-            organization: managedPolicy.organization,
-          });
-        }
+        yield* refuseAboveCeiling(managedPolicy, input.thread);
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
         const supportedRuntimeModes =
           instance === undefined

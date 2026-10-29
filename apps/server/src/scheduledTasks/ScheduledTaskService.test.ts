@@ -525,6 +525,11 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
       // A disabled task does not run, so it can still be saved.
       yield* save(false);
       assert.lengthOf((yield* service.list()).tasks, 1);
+      // Nor can it be switched back on while its mode is above the ceiling.
+      const reenabled = yield* service
+        .setEnabled({ id: ScheduledTaskId.make("task:above-ceiling"), enabled: true })
+        .pipe(Effect.flip);
+      assert.equal(reenabled.message, "Example Corp limits threads to Auto-accept edits.");
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

@@ -1,7 +1,7 @@
 import type { DesktopUpdateChannel, DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { prepareLocalTrackSwitch } from "./updateTrackSwitch.logic";
+import { localUpdaterStaysPut, prepareLocalTrackSwitch } from "./updateTrackSwitch.logic";
 
 const STABLE = "0.1.3";
 
@@ -72,5 +72,25 @@ describe("prepareLocalTrackSwitch", () => {
     const undo = fakeBridge(null);
     expect(await prepare(undo.bridge, false)).toEqual({ ok: true, local: null });
     expect(undo.saved).toEqual(["latest"]);
+  });
+});
+
+describe("localUpdaterStaysPut", () => {
+  it("moves an app whose updater is off only because its policy has no nightly", () => {
+    const policy = (updates: { mode: "auto" | "off"; allowNightly?: boolean }) => ({
+      organization: "Example Corp",
+      lockedSettings: [],
+      limits: { updates },
+    });
+    const off = { enabled: false };
+    expect(localUpdaterStaysPut(off, "latest", policy({ mode: "auto", allowNightly: false }))).toBe(
+      false,
+    );
+    expect(
+      localUpdaterStaysPut(off, "nightly", policy({ mode: "auto", allowNightly: false })),
+    ).toBe(true);
+    expect(localUpdaterStaysPut(off, "latest", policy({ mode: "off" }))).toBe(true);
+    expect(localUpdaterStaysPut(off, "latest", undefined)).toBe(true);
+    expect(localUpdaterStaysPut({ enabled: true }, "nightly", undefined)).toBe(false);
   });
 });

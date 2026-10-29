@@ -22,6 +22,8 @@ export function ManagedControl({
         render={
           <span
             tabIndex={0}
+            role="group"
+            aria-disabled="true"
             aria-label={reason}
             className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />

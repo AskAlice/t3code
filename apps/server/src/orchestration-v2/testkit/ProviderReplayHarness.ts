@@ -293,7 +293,7 @@ export function layerWithRegistry<Error>(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  const layerRuntime =
+  const layerRuntimeBase =
     scenario.runtimePolicyOverride === undefined
       ? RuntimePolicy.layer
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
@@ -329,6 +329,9 @@ export function layerWithRegistry<Error>(
   ).pipe(Layer.provide(layerDatabase));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
+  );
+  const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
+    Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
   );
   const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
     Layer.provide(layerDatabase),
