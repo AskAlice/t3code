@@ -2035,6 +2035,25 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("removes an unchanged archived worktree in a repository without a remote", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeUnchanged: true,
+        });
+        setThreads([shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) })]);
+        expect((yield* command(repo, ["remote"])).stdout).toBe("");
+
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "removed",
+          reason: "No commits beyond the default branch",
+        });
+        expect(yield* fs.exists(worktree)).toBe(false);
+      }),
+    ),
+  );
   it.live("preserves tracked edits written after the final status check", () =>
     runCleanupTest(
       Effect.gen(function* () {
