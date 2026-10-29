@@ -144,13 +144,20 @@ export function matchesServerUpdateReadyEvent(
     : event.payload.updateOutcome?.id === result.updateId;
 }
 
+/**
+ * `acceptedAt` is the `ready.at` of the process that accepted the update. A launcher host
+ * that comes back as any other process ends the wait, so validation can reject a missing
+ * or foreign outcome instead of timing out.
+ */
 export function matchesServerUpdateResumeEvent(
   result: ServerSelfUpdateResult,
   event: ServerLifecycleStreamReadyEvent,
+  acceptedAt?: string,
 ): boolean {
   return (
     (result.method === "desktop-app" && result.desktopUpdateToken !== undefined) ||
-    matchesServerUpdateReadyEvent(result, event)
+    matchesServerUpdateReadyEvent(result, event) ||
+    (result.updateId !== undefined && acceptedAt !== undefined && event.payload.at !== acceptedAt)
   );
 }
 
@@ -851,6 +858,12 @@ export function createServerEnvironmentAtoms<R, E>(
         const desktopCommitStarting = yield* Deferred.make<void>();
         const desktopReconnectObserverArmed = yield* Deferred.make<void>();
         const desktopReconnected = yield* Deferred.make<void>();
+        const acceptedAt = yield* Ref.make(Option.none<string>());
+        const recordAcceptedAt = (at: string) =>
+          Ref.modify(acceptedAt, (current) => {
+            const recorded = Option.getOrElse(current, () => at);
+            return [recorded, Option.some(recorded)] as const;
+          });
         yield* Deferred.await(desktopCommitStarting).pipe(
           Effect.andThen(
             environmentRegistry.stateChanges(target.environmentId).pipe(
@@ -877,6 +890,25 @@ export function createServerEnvironmentAtoms<R, E>(
               fromVersion,
               targetVersion,
             });
+            // The replay delivered before the request settles is the accepting process's own.
+            yield* environmentRegistry
+              .followStream(
+                target.environmentId,
+                subscribe(WS_METHODS.subscribeServerLifecycle, {}),
+              )
+              .pipe(
+                Stream.filter(
+                  (event): event is ServerLifecycleStreamReadyEvent => event.type === "ready",
+                ),
+                Stream.runHead,
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () => Effect.void,
+                    onSome: (ready) => recordAcceptedAt(ready.payload.at),
+                  }),
+                ),
+                Effect.forkChild,
+              );
 
             const supportsProgress =
               currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
@@ -995,8 +1027,13 @@ export function createServerEnvironmentAtoms<R, E>(
           .followStream(target.environmentId, subscribe(WS_METHODS.subscribeServerLifecycle, {}))
           .pipe(
             Stream.filter(
-              (event): event is ServerLifecycleStreamReadyEvent =>
-                event.type === "ready" && matchesServerUpdateResumeEvent(result, event),
+              (event): event is ServerLifecycleStreamReadyEvent => event.type === "ready",
+            ),
+            // Without a captured replay, the first ready seen is taken as the accepting process.
+            Stream.filterEffect((event) =>
+              recordAcceptedAt(event.payload.at).pipe(
+                Effect.map((at) => matchesServerUpdateResumeEvent(result, event, at)),
+              ),
             ),
             Stream.runHead,
             Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),

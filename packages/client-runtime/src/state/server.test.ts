@@ -1174,29 +1174,39 @@ describe("launcher update resume", () => {
   const runLauncherUpdate = Effect.fn("ServerUpdateTest.runLauncherUpdate")(function* (
     oldProcessReplay: ServerLifecycleStreamEvent,
     newProcessReady: ServerLifecycleStreamEvent,
+    // The download outlasts the old process's replay, and the old process is gone on resume.
+    options: { readonly oldProcessGoneOnResume?: boolean } = {},
   ) {
     const subscribed = yield* Deferred.make<void>();
+    let lifecycleSubscriptions = 0;
+    const complete = {
+      type: "complete" as const,
+      result: {
+        targetVersion: "0.0.31",
+        method: "boot-service" as const,
+        updateId: "update-1",
+      },
+    };
     const client = {
       [WS_METHODS.subscribeServerConfig]: () => Stream.never,
       [WS_METHODS.serverUpdateServerWithProgress]: () =>
-        Stream.make({
-          type: "complete" as const,
-          result: {
-            targetVersion: "0.0.31",
-            method: "boot-service" as const,
-            updateId: "update-1",
-          },
-        }),
+        options.oldProcessGoneOnResume
+          ? Stream.fromEffect(Effect.as(Effect.sleep("2 seconds"), complete))
+          : Stream.make(complete),
       [WS_METHODS.subscribeServerLifecycle]: () =>
-        Stream.fromEffect(
-          Deferred.succeed(subscribed, undefined).pipe(
-            Effect.andThen(Effect.sleep("1 second")),
-            Effect.as(oldProcessReplay),
-          ),
-        ).pipe(
-          Stream.concat(Stream.fromEffect(Effect.as(Effect.sleep("1 minute"), newProcessReady))),
-          Stream.concat(Stream.never),
-        ),
+        options.oldProcessGoneOnResume && ++lifecycleSubscriptions > 1
+          ? Stream.concat(Stream.make(newProcessReady), Stream.never)
+          : Stream.fromEffect(
+              Deferred.succeed(subscribed, undefined).pipe(
+                Effect.andThen(Effect.sleep("1 second")),
+                Effect.as(oldProcessReplay),
+              ),
+            ).pipe(
+              Stream.concat(
+                Stream.fromEffect(Effect.as(Effect.sleep("1 minute"), newProcessReady)),
+              ),
+              Stream.concat(Stream.never),
+            ),
     } as unknown as WsRpcProtocolClient;
     const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
       target: TARGET,
@@ -1308,6 +1318,20 @@ describe("launcher update resume", () => {
         );
 
         expect(afterOldReplay).toMatchObject({ status: "running", stage: "resuming" });
+        expect(afterNewProcess).toEqual(UNCOMMITTED_RESUME);
+      }),
+    ),
+  );
+
+  it.effect("fails promptly when the old server is gone before the resume wait subscribes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { afterNewProcess } = yield* runLauncherUpdate(
+          ready("2026-08-01T00:00:00.000Z", "0.0.30"),
+          ready("2026-08-01T00:05:00.000Z", "0.0.31"),
+          { oldProcessGoneOnResume: true },
+        );
+
         expect(afterNewProcess).toEqual(UNCOMMITTED_RESUME);
       }),
     ),
