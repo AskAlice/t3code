@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -34,17 +34,14 @@ describe("SelectPopup", () => {
     const list = document.querySelector<HTMLElement>("[data-slot='select-list']");
     expect(list && list.scrollHeight - list.clientHeight).toBe(1);
 
-    await expect
-      .poll(() => {
-        const option = lastOption.element();
-        const rect = option.getBoundingClientRect();
-        const hit = document.elementFromPoint(
-          rect.left + rect.width / 2,
-          rect.top + rect.height / 2,
-        );
-        return hit && option.contains(hit) ? "option" : hit?.getAttribute("data-slot");
-      })
-      .toBe("option");
+    await vi.waitFor(() => {
+      const option = lastOption.element();
+      const rect = option.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      expect(hit && option.contains(hit) ? "option" : hit?.getAttribute("data-slot")).toBe(
+        "option",
+      );
+    });
   });
 
   it("keeps the native scrollbar on a fallback list that overflows", async () => {
