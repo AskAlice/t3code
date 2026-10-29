@@ -242,6 +242,24 @@ describe("workspace area focus", () => {
     await vi.waitFor(() => expect(timeline.scrollTop).toBeGreaterThan(0));
   });
 
+  it("scrolls the conversation with the keyboard once an empty thread gets a timeline", async () => {
+    using fixture = setup();
+    const conversation = fixture.area("conversation", 1);
+    conversation.button.remove();
+    conversation.element.style.height = "200px";
+    const composer = fixture.area("composer", 2);
+    composer.button.focus();
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(conversation.element);
+    fixture.controller.move(1);
+    const timeline = conversationScroller(200);
+    timeline.append(Object.assign(document.createElement("div"), { style: "height: 2000px" }));
+    conversation.element.append(timeline);
+    fixture.controller.move(-1);
+    await userEvent.keyboard("{ArrowDown}{PageDown}");
+    await vi.waitFor(() => expect(timeline.scrollTop).toBeGreaterThan(0));
+  });
+
   it("returns focus to the area when its focused control disappears", async () => {
     using fixture = setup();
     const panel = fixture.area("panel", 3);
