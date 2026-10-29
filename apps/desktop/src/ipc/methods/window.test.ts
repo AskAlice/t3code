@@ -21,6 +21,7 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
@@ -178,20 +179,35 @@ describe("getLocalEnvironmentBootstraps", () => {
 });
 
 describe("getRelayTelemetryEnabled", () => {
+  const relayTelemetryEnabled = (env: NodeJS.ProcessEnv, policyFile?: string) =>
+    getRelayTelemetryEnabled.handler().pipe(
+      Effect.provideService(HostProcess.Environment, env),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
+        platform: "linux",
+      } as DesktopEnvironment.DesktopEnvironment["Service"]),
+      Effect.provide(
+        FileSystem.layerNoop({
+          exists: () => Effect.succeed(policyFile !== undefined),
+          readFileString: () => Effect.succeed(policyFile ?? ""),
+        }),
+      ),
+    );
+
   it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
     Effect.gen(function* () {
-      assert.isFalse(
-        yield* getRelayTelemetryEnabled.handler().pipe(
-          Effect.provideService(HostProcess.Environment, {
-            T3CODE_TELEMETRY_ENABLED: "false",
-          }),
-        ),
-      );
-      assert.isTrue(
-        yield* getRelayTelemetryEnabled
-          .handler()
-          .pipe(Effect.provideService(HostProcess.Environment, {})),
-      );
+      assert.isFalse(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }));
+      assert.isTrue(yield* relayTelemetryEnabled({}));
+    }),
+  );
+
+  it.effect("turns relay tracing off when the managed policy turns telemetry off", () =>
+    Effect.gen(function* () {
+      const policy = (limits: object) =>
+        JSON.stringify({ schemaVersion: 1, organization: "Example Corp", limits });
+      assert.isFalse(yield* relayTelemetryEnabled({}, policy({ telemetry: false })));
+      assert.isTrue(yield* relayTelemetryEnabled({}, policy({ webhookTasks: false })));
+      // A policy that cannot be read fails closed.
+      assert.isFalse(yield* relayTelemetryEnabled({}, "{"));
     }),
   );
 });

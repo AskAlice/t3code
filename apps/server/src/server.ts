@@ -1133,7 +1133,9 @@ const layerMakeServer = Layer.unwrap(
         ),
       ),
       Layer.provide(layerActivation),
-      Layer.provideMerge(RelayTracing.layerServerRelayBroker),
+      Layer.provideMerge(
+        RelayTracing.layerServerRelayBroker.pipe(Layer.provide(ManagedPolicy.layer)),
+      ),
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
