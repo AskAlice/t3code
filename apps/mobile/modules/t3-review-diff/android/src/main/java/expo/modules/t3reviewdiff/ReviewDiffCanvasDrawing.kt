@@ -363,21 +363,25 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     }
   }
 
-  /** Highlights word diffs; [top]..[bottom] is the row's first visual line. */
+  /**
+   * Highlights word diffs; [top]..[bottom] is the row's first visual line. Expects the base code paint
+   * and leaves [textPaint] configured for the last measured token run.
+   */
   @Suppress("LongParameterList")
   fun drawWordDiffRanges(
     canvas: Canvas,
     row: DiffRow,
+    tokens: List<DiffToken>?,
     codeX: Float,
     top: Int,
     bottom: Int,
+    style: DiffStyle,
     lines: CodeLines
   ) {
     if (lines.nativeLayout != null) return
     if (row.wordDiffRanges.isEmpty() || (row.change != "add" && row.change != "delete")) return
     val color = if (row.change == "add") theme.addBar else theme.deleteBar
     backgroundPaint.color = withAlpha(color, 71)
-    val characterWidth = textPaint.measureText("M")
     val fontHeight = textPaint.fontMetrics.run { descent - ascent }
     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
     val highlightTop = (top + bottom - highlightHeight) / 2f
@@ -386,8 +390,8 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         val start = max(range.start, lineStart)
         val end = min(range.end, lines.end(line, Int.MAX_VALUE))
         if (end <= start) return@forEachIndexed
-        val left = codeX + (start - lineStart) * characterWidth
-        val right = max(left + 2f * density, left + (end - start) * characterWidth)
+        val left = codeX + measureCode(row.content, tokens, style, lineStart, start)
+        val right = max(left + 2f * density, codeX + measureCode(row.content, tokens, style, lineStart, end))
         val lineTop = highlightTop + line * lines.height
         canvas.drawRoundRect(
           RectF(left, lineTop, right, lineTop + highlightHeight),
@@ -397,6 +401,26 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         )
       }
     }
+  }
+
+  /** Advance drawCode gives columns [from]..[to] of one visual line, with each token run's own paint. */
+  private fun measureCode(content: String, tokens: List<DiffToken>?, style: DiffStyle, from: Int, to: Int): Float {
+    if (tokens.isNullOrEmpty()) {
+      configureCodePaint(theme.text, 0, style)
+      return textPaint.measureText(content, from, to)
+    }
+    var width = 0f
+    var runStart = 0
+    for (run in tokens) {
+      val runEnd = runStart + run.content.length
+      if (runEnd > from) {
+        configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
+        width += textPaint.measureText(run.content, max(from, runStart) - runStart, min(to, runEnd) - runStart)
+      }
+      if (runEnd >= to) break
+      runStart = runEnd
+    }
+    return width
   }
 
   @Suppress("LongParameterList")
