@@ -250,8 +250,8 @@ function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollA
       className={cn("h-auto max-h-[min(24rem,40dvh)]", className)}
       {...props}
     >
-      {}
-      <div className="[[data-has-overflow-y]>&]:pe-2">{children}</div>
+      {/* Padding must not depend on the overflow flag, or WebKit's false 1px overflow oscillates. */}
+      <div className="pe-2">{children}</div>
     </ScrollArea>
   );
 }
