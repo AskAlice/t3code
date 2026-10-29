@@ -15,10 +15,12 @@ import {
 
 const policy = JSON.stringify({ schemaVersion: 1, organization: "Example Corp" });
 
-/** Files that exist, and what a command prints and exits with, by command name. */
+type Result = { readonly stdout: string; readonly exitCode: number };
+
+/** Files that exist, and what a command prints and exits with, by command name and arguments. */
 const machine = (
   files: Readonly<Record<string, string>>,
-  commands: Readonly<Record<string, { readonly stdout: string; readonly exitCode: number }>>,
+  commands: Readonly<Record<string, Result | ((args: ReadonlyArray<string>) => Result)>>,
 ) =>
   Layer.mergeAll(
     FileSystem.layerNoop({
@@ -28,8 +30,12 @@ const machine = (
     Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) => {
-        const { command: name } = command as unknown as { readonly command: string };
-        const result = commands[name] ?? { stdout: "", exitCode: 127 };
+        const { command: name, args } = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        const answer = commands[name] ?? { stdout: "", exitCode: 127 };
+        const result = typeof answer === "function" ? answer(args) : answer;
         return Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
@@ -86,14 +92,18 @@ describe("readManagedPolicy", () => {
 
   it.effect("reads the Windows Policies registry value, and treats a missing one as none", () =>
     Effect.gen(function* () {
-      const reg = (stdout: string, exitCode = 0) => ({
-        "C:\\Windows\\System32\\reg.exe": { stdout, exitCode },
+      // The Policies root answers unless the registry itself cannot be read.
+      const reg = (stdout: string, exitCode = 0, rootExitCode = 0) => ({
+        "C:\\Windows\\System32\\reg.exe": (args: ReadonlyArray<string>) =>
+          args.includes("/v") ? { stdout, exitCode } : { stdout: "", exitCode: rootExitCode },
       });
       const output = (type: string, value: string) =>
         `\r\n${WINDOWS_POLICY_KEY}\r\n    Policy    ${type}    ${value}\r\n\r\n`;
 
       assert.equal(yield* read("win32", {}, reg(output("REG_SZ", policy))), WINDOWS_POLICY_KEY);
       assert.isUndefined(yield* read("win32", {}, reg("", 1)));
+      // A query that fails exits 1 too, so it must not read as no policy.
+      assert.include(yield* read("win32", {}, reg("", 1, 1)), "registry cannot be read");
       assert.equal(
         yield* read("win32", { [managedPolicyPath("win32")]: policy }, reg("", 1)),
         managedPolicyPath("win32"),

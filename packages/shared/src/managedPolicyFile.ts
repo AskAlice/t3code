@@ -78,6 +78,7 @@ export const MACOS_MANAGED_PREFERENCES_PATH =
   "/Library/Managed Preferences/com.t3tools.t3code.plist";
 /** The registry key Group Policy and Intune write to on Windows; `Policy` holds the JSON. */
 export const WINDOWS_POLICY_KEY = "HKLM\\SOFTWARE\\Policies\\T3Tools\\T3Code";
+const WINDOWS_POLICIES_ROOT = "HKLM\\SOFTWARE\\Policies";
 // Absolute paths: an earlier PATH entry could otherwise answer that there is no policy.
 const PLUTIL = "/usr/bin/plutil";
 const REG = "C:\\Windows\\System32\\reg.exe";
@@ -126,13 +127,19 @@ const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platfor
   }
   if (platform === "win32") {
     const path = WINDOWS_POLICY_KEY;
-    const queried = yield* run(REG, ["query", path, "/v", "Policy", "/reg:64"]).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ManagedPolicyFileError({ path, reason: "the registry cannot be read", cause }),
-      ),
-    );
-    // reg exits 1 when the key or value does not exist.
+    const query = (args: ReadonlyArray<string>) =>
+      run(REG, ["query", ...args, "/reg:64"]).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ManagedPolicyFileError({ path, reason: "the registry cannot be read", cause }),
+        ),
+      );
+    // reg exits 1 both for a missing value and for a failed query. The Policies key exists on
+    // every Windows install, so reading it first separates the two.
+    if ((yield* query([WINDOWS_POLICIES_ROOT])).exitCode !== 0) {
+      return yield* new ManagedPolicyFileError({ path, reason: "the registry cannot be read" });
+    }
+    const queried = yield* query([path, "/v", "Policy"]);
     if (queried.exitCode === 1) return undefined;
     const raw = parseRegistryPolicy(queried.stdout);
     if (queried.exitCode !== 0 || raw === undefined) {
