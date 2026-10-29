@@ -7,6 +7,11 @@ export function isMuseUsageLimitFailure(message: string | undefined): boolean {
   return message !== undefined && /\b429\b/.test(message) && /quota|usage limit/i.test(message);
 }
 
+/** Muse types some refusals as quota while its own usage report shows every window has room. */
+export function museUsageHasHeadroom(usage: MuseSubscriptionUsage | undefined): boolean {
+  return usage !== undefined && usage.window.usedPercent < 100 && usage.weekly.usedPercent < 100;
+}
+
 const NAMED_RESET =
   /\bresets at (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))/i;
 

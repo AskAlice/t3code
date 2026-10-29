@@ -61,7 +61,11 @@ import {
   museApprovalOptions,
   type MuseItem,
 } from "./protocol.ts";
-import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
+import {
+  isMuseUsageLimitFailure,
+  museUsageHasHeadroom,
+  museUsageLimitResetAt,
+} from "./usageLimits.ts";
 import {
   createMuseSdkHostEffect,
   museApprovalMode,
@@ -976,7 +980,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         active = undefined;
         if (status === "failed") {
           const usageLimited =
-            disposition === "reusable" && (quota !== undefined || isMuseUsageLimitFailure(detail));
+            disposition === "reusable" &&
+            (quota !== undefined
+              ? !museUsageHasHeadroom(latestSubscriptionUsage)
+              : isMuseUsageLimitFailure(detail));
           const failure = makeProviderFailure({
             class:
               disposition === "broken"
