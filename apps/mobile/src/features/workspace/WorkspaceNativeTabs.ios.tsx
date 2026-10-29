@@ -85,9 +85,14 @@ export function WorkspaceNativeTabs(props: {
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const workspacePage = !workspaceUsesColumns(selectedTab, workspace.settingsOpen);
-  // In an expanded split the tabs belong to the sidebar column, so they leave with it.
+  // In an expanded split the tabs leave with the sidebar column. Settings keeps them: its header
+  // has no sidebar button, and its list already reserves their height.
   const padTabs =
-    deviceType === "pad" && (!layout.usesSplitView || panes.primarySidebarVisible || workspacePage);
+    deviceType === "pad" &&
+    (!layout.usesSplitView ||
+      panes.primarySidebarVisible ||
+      workspacePage ||
+      workspace.settingsOpen);
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
   const request = {
     selectedScreenKey: selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!,
