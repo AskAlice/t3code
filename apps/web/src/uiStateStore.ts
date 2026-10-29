@@ -393,8 +393,8 @@ interface ProjectOrderGroup {
 
 /**
  * Moves `groups[fromIndex]` to `toIndex` as a whole block. Saved keys of
- * projects not in `groups` (disabled or disconnected environments) keep their
- * positions; the slots visible projects held are refilled in the new order.
+ * projects not in `groups` (disabled or disconnected environments) follow the
+ * visible ones, so a member that returns cannot pull its group back up.
  */
 export function reorderProjectGroups(
   state: UiState,
@@ -418,13 +418,10 @@ export function reorderProjectGroups(
       legacyProjectCwdPreferenceKey(member.workspaceRoot),
     ]),
   );
-  const nextKeys = members.map((member) => member.physicalProjectKey).values();
-  const projectOrder = state.projectOrder.flatMap((key) => {
-    if (!visibleKeys.has(key)) return [key];
-    const next = nextKeys.next();
-    return next.done ? [] : [next.value];
-  });
-  projectOrder.push(...nextKeys);
+  const projectOrder = [
+    ...members.map((member) => member.physicalProjectKey),
+    ...state.projectOrder.filter((key) => !visibleKeys.has(key)),
+  ];
   return { ...state, projectOrder };
 }
 

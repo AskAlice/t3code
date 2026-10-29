@@ -108,7 +108,7 @@ describe("uiStateStore pure functions", () => {
     expect(reorderProjectGroups(state, groups, 1, 1)).toBe(state);
   });
 
-  it("keeps saved positions of projects that are not loaded", () => {
+  it("keeps projects that are not loaded, behind the reordered ones", () => {
     const member = (physicalProjectKey: string, workspaceRoot: string) => ({
       memberProjects: [{ physicalProjectKey, workspaceRoot }],
     });
@@ -123,7 +123,26 @@ describe("uiStateStore pure functions", () => {
       0,
     );
 
-    expect(next.projectOrder).toEqual(["remote:b", "local:c", "local:a", "local:d"]);
+    expect(next.projectOrder).toEqual(["local:c", "local:a", "local:d", "remote:b"]);
+  });
+
+  it("does not let a returning environment pull its group back above a moved one", () => {
+    const member = (physicalProjectKey: string, workspaceRoot: string) => ({
+      memberProjects: [{ physicalProjectKey, workspaceRoot }],
+    });
+    // env-1 is offline, so group A shows only its env-2 member.
+    const state = makeUiState({
+      projectOrder: ["env-1:/repo/a", "env-2:/repo/a", "env-2:/repo/b"],
+    });
+
+    const next = reorderProjectGroups(
+      state,
+      [member("env-2:/repo/a", "/repo/a"), member("env-2:/repo/b", "/repo/b")],
+      1,
+      0,
+    );
+
+    expect(next.projectOrder).toEqual(["env-2:/repo/b", "env-2:/repo/a", "env-1:/repo/a"]);
   });
 });
 

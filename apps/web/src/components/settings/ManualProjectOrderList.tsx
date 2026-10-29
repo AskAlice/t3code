@@ -16,15 +16,24 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVerticalIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
 import { cn } from "~/lib/utils";
-import type { SidebarProjectSnapshot } from "~/sidebarProjectGrouping";
+import {
+  projectGroupsSpanEnvironments,
+  type SidebarProjectSnapshot,
+} from "~/sidebarProjectGrouping";
+import { useEnvironmentMachines, usePrimaryEnvironmentId } from "~/state/environments";
 import { useUiStateStore } from "~/uiStateStore";
+import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 export function ManualProjectOrderList() {
   const groups = useSidebarProjectGroups();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const machineByEnvironmentId = useEnvironmentMachines();
+  const showEnvironments = projectGroupsSpanEnvironments(groups);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -54,7 +63,15 @@ export function ManualProjectOrderList() {
         >
           <ol aria-label="Manual project order">
             {groups.map((group, index) => (
-              <SortableProjectRow key={group.projectKey} group={group} position={index + 1} />
+              <SortableProjectRow key={group.projectKey} group={group} position={index + 1}>
+                {showEnvironments ? (
+                  <ProjectEnvironmentBadge
+                    group={group}
+                    primaryEnvironmentId={primaryEnvironmentId}
+                    machineByEnvironmentId={machineByEnvironmentId}
+                  />
+                ) : null}
+              </SortableProjectRow>
             ))}
           </ol>
         </SortableContext>
@@ -66,9 +83,11 @@ export function ManualProjectOrderList() {
 function SortableProjectRow({
   group,
   position,
+  children,
 }: {
   readonly group: SidebarProjectSnapshot;
   readonly position: number;
+  readonly children: ReactNode;
 }) {
   const {
     attributes,
@@ -91,6 +110,7 @@ function SortableProjectRow({
     >
       <ProjectFavicon project={group} className="size-4 shrink-0" />
       <span className="min-w-0 flex-1 truncate text-sm text-foreground">{group.displayName}</span>
+      {children}
       <button
         type="button"
         ref={setActivatorNodeRef}
