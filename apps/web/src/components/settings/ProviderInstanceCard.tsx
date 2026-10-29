@@ -1055,7 +1055,8 @@ export function ProviderInstanceCard({
               />
             </span>
           ) : null}
-          <ManagedControl reason={managedDriverReason}>
+          {/* The policy refuses switching it on; switching it off stays the user's call. */}
+          <ManagedControl reason={enabled ? undefined : managedDriverReason}>
             <Switch
               checked={enabled}
               disabled={readOnly || (projectOverride !== undefined && !canWriteSettings)}
