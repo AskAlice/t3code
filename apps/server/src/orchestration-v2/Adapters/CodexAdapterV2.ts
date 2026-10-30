@@ -1679,7 +1679,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // Absent: fall back to persisted metadata. Undefined: Codex holds no known context.
         const deliveredContextDigests = new Map<string, string | undefined>();
         // Recorded once Codex accepts the turn, before its turn/started can lead to a terminal.
-        const pendingContextDigests = new Map<string, string>();
+        const pendingContextDigests = new Map<string, string | undefined>();
         // Codex drops client developer messages during compaction but only
         // resends additionalContext when it changes.
         const restoreAdditionalContext = Effect.fn("CodexAdapterV2.restoreAdditionalContext")(
@@ -1934,11 +1934,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
         const invalidateAdditionalContext = (threadId: string) =>
           recordAdditionalContextDigest(threadId, undefined);
-        const recordPendingContextDigest = (threadId: string) =>
+        // Compare against the stored thread: an update emitted after a terminal is never stored.
+        const recordPendingContextDigest = (
+          threadId: string,
+          storedThread: OrchestrationV2ProviderThread,
+        ) =>
           Effect.suspend(() => {
+            if (!pendingContextDigests.has(threadId)) return Effect.void;
             const digest = pendingContextDigests.get(threadId);
-            if (digest === undefined) return Effect.void;
             pendingContextDigests.delete(threadId);
+            rootProviderThreads.set(threadId, storedThread);
             return recordAdditionalContextDigest(threadId, digest);
           });
         // Setting a goal passes through cleared and paused states; publish only the result.
@@ -4484,12 +4489,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             const pendingRootTurn = (yield* Ref.get(pendingRootTurns)).get(payload.threadId);
             if (pendingRootTurn !== undefined) {
+              yield* recordPendingContextDigest(payload.threadId, pendingRootTurn.providerThread);
               yield* registerRootTurn({
                 turnInput: pendingRootTurn,
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
-              yield* recordPendingContextDigest(payload.threadId);
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);
                 updated.delete(payload.threadId);
@@ -6598,9 +6603,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const deliveredDigest = deliveredContextDigests.has(threadId)
               ? deliveredContextDigests.get(threadId)
               : turnInput.providerThread.nativeMetadata?.codexAdditionalContextDigest;
-            if (contextDigest !== undefined && contextDigest !== deliveredDigest) {
-              pendingContextDigests.set(threadId, contextDigest);
-            }
+            pendingContextDigests.set(threadId, contextDigest ?? deliveredDigest);
             const started = yield* client.request(
               "turn/start",
               contextDigest !== undefined && contextDigest === deliveredDigest
@@ -6609,11 +6612,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             );
             // A turn/started notification may have registered and completed this turn already.
             if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput) return;
-            rootProviderThreads.set(
-              threadId,
-              withCurrentContextDigest(threadId, turnInput.providerThread),
-            );
-            yield* recordPendingContextDigest(threadId);
+            yield* recordPendingContextDigest(threadId, turnInput.providerThread);
             const providerThread = rootProviderThreads.get(threadId) ?? turnInput.providerThread;
             yield* registerRootTurn({
               turnInput: { ...turnInput, providerThread },
@@ -7715,12 +7714,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
               turnTokenUsageByThread.delete(threadId);
               deliveredContextDigests.set(response.thread.id, undefined);
-              const { codexAdditionalContextDigest: _reverted, ...nativeMetadata } =
+              const { codexAdditionalContextDigest: revertedDigest, ...nativeMetadata } =
                 threadInput.providerThread.nativeMetadata ?? {};
               return {
                 providerThread: {
                   ...threadInput.providerThread,
-                  ...(_reverted === undefined ? {} : { nativeMetadata }),
+                  ...(revertedDigest === undefined ? {} : { nativeMetadata }),
                   nativeThreadRef: {
                     driver: CODEX_PROVIDER,
                     nativeId: response.thread.id,

@@ -2085,7 +2085,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             yield* harness.runtime.startTurn(
               makeCodexTestTurnInput({
                 threadId: harness.threadId,
-                providerThread: harness.providerThread,
+                providerThread:
+                  harness.events.findLast((event) => event.type === "provider_thread.updated")
+                    ?.providerThread ?? harness.providerThread,
                 now: yield* DateTime.now,
                 attemptId: RunAttemptId.make("automatic-compact"),
                 text: "work",
@@ -2540,6 +2542,102 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           (event) => event.type === "provider_thread.updated",
         )?.providerThread;
         assert.isString(persisted?.nativeMetadata?.codexAdditionalContextDigest);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("republishes a T3 context digest the stored provider thread lost", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "lost-digest-context-thread";
+        const params = (text: string) =>
+          CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId,
+            codexInput: [{ type: "text", text }],
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            hasT3Mcp: true,
+          });
+        const completed = (id: number, nativeTurnId: string, turnParams: unknown) =>
+          [
+            {
+              type: "expect_outbound",
+              label: nativeTurnId,
+              frame: { id, method: "turn/start", params: turnParams },
+            },
+            {
+              type: "emit_inbound",
+              label: nativeTurnId,
+              frame: {
+                id,
+                result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: `${nativeTurnId} completed`,
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>;
+        const { additionalContext: _unchanged, ...secondWithoutContext } = yield* params("second");
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "lost-digest-context",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "unused-turn",
+                prompt: "unused-prompt",
+              }).slice(0, 5),
+              ...completed(3, "turn-first", yield* params("first")),
+              ...completed(4, "turn-second", secondWithoutContext),
+            ],
+          }),
+        );
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("test"),
+          threadId: harness.threadId,
+          providerSessionId: "lost-digest-context-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer test",
+          browserToolsAvailable: true,
+        });
+        const turnInput = (text: string) =>
+          Effect.map(DateTime.now, (now) =>
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              // An update published after a terminal is never stored, so the stored thread lacks it.
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`lost-digest-${text}`),
+              text,
+            }),
+          );
+        yield* harness.runtime.startTurn(yield* turnInput("first"));
+        yield* harness.awaitTerminal(1);
+        const firstTerminal = harness.events.length;
+        yield* harness.runtime.startTurn(yield* turnInput("second"));
+        yield* harness.awaitTerminal(2);
+        const secondTurnEvents = harness.events.slice(firstTerminal);
+        const republished = secondTurnEvents
+          .slice(
+            0,
+            secondTurnEvents.findIndex((event) => event.type === "turn.terminal"),
+          )
+          .findLast((event) => event.type === "provider_thread.updated")?.providerThread;
+        assert.isString(republished?.nativeMetadata?.codexAdditionalContextDigest);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
