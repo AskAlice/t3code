@@ -1579,7 +1579,13 @@ describe("EnvironmentRegistry", () => {
         expect(hasRoutes(yield* Ref.get(harness.storedTargets), TARGET.environmentId)).toBe(false);
 
         yield* registry.register(new RelayConnectionRegistration({ target: shadowedTarget }));
+        const pairing = yield* registry
+          .register(new RelayConnectionRegistration({ target: shadowedTarget }), {
+            knownAddressOnly: true,
+          })
+          .pipe(Effect.flip);
 
+        expect(pairing).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
         ).toEqual(TARGET);

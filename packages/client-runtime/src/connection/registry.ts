@@ -109,8 +109,9 @@ export class EnvironmentRegistry extends Context.Service<
       options?: { readonly knownAddressOnly?: boolean },
     ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError | ConnectionBlockedError>;
     /**
-     * Fails when the route would add a new address to a saved user environment. Pairing that does
-     * not target an environment checks this, because the server reports its own environment id.
+     * Fails when the route claims a platform environment or would add a new address to a saved
+     * user environment. Pairing that does not target an environment checks this, because the
+     * server reports its own environment id.
      */
     readonly assertKnownAddress: (
       route: ConnectionRoute,
@@ -545,7 +546,13 @@ export const make = Effect.gen(function* () {
     route: ConnectionRoute,
   ) {
     const environmentId = route.target.environmentId;
-    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
+    // A copied T3 home (e.g. a restored backup) makes another machine report this one's id.
+    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: `That address reaches ${route.target.label}, which reports this device's own environment ID, so it can't be added.`,
+      });
+    }
     const saved = (yield* SubscriptionRef.get(entries)).get(environmentId);
     if (
       saved !== undefined &&
@@ -568,11 +575,11 @@ export const make = Effect.gen(function* () {
     return yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
-        if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
-          return false;
-        }
         if (options?.knownAddressOnly === true) {
           yield* assertKnownAddress(route);
+        }
+        if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+          return false;
         }
         const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
         let entry = registered;
