@@ -1439,7 +1439,7 @@ const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 
 ### Background work you wait on
 
-To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. Background work started by a foreground subagent stops when that subagent returns, so it cannot be waited on and is reported unmatched: a foreground subagent must finish its work before it returns, and long work belongs in \`delegate_task\`. T3 MCP tools are deferred: load one with ToolSearch before you call it.
+To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. A foreground subagent's background work stops when it returns, so it cannot be waited on; finish it before returning. T3 MCP tools are deferred: load one with ToolSearch before you call it.
 `;
 
 // Native subagents start from their task, not this session's system prompt.
