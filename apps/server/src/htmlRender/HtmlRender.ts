@@ -1,4 +1,6 @@
 import type { ThreadId } from "@t3tools/contracts";
+import { validateOpenUi } from "@t3tools/openui/library";
+import { openUiPage } from "@t3tools/openui/page";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -93,6 +95,41 @@ const rejectViewportHeight = (html: string) => {
   return Effect.void;
 };
 
+export class HtmlRenderOpenUiError extends Schema.TaggedError<HtmlRenderOpenUiError>()(
+  "HtmlRenderOpenUiError",
+  { errors: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `The OpenUI program has errors:\n${this.errors.join("\n")}`;
+  }
+}
+
+export class HtmlRenderSourceError extends Schema.TaggedError<HtmlRenderSourceError>()(
+  "HtmlRenderSourceError",
+  {},
+) {
+  override get message(): string {
+    return "Pass exactly one of html or openui.";
+  }
+}
+
+/** A page is either HTML or an OpenUI program that compiles to one. */
+export interface HtmlRenderSource {
+  readonly html?: string | undefined;
+  readonly openui?: string | undefined;
+}
+
+const pageFromSource = (source: HtmlRenderSource) => {
+  if ((source.html === undefined) === (source.openui === undefined)) {
+    return Effect.fail(new HtmlRenderSourceError());
+  }
+  if (source.html !== undefined) return Effect.succeed({ html: source.html, source: source.html });
+  const { errors } = validateOpenUi(source.openui!);
+  return errors.length > 0
+    ? Effect.fail(new HtmlRenderOpenUiError({ errors }))
+    : Effect.succeed({ html: openUiPage(source.openui!), source: source.openui! });
+};
+
 export class HtmlRenderStoreError extends Schema.TaggedError<HtmlRenderStoreError>()(
   "HtmlRenderStoreError",
   { cause: Schema.Defect() },
@@ -103,6 +140,8 @@ export class HtmlRenderStoreError extends Schema.TaggedError<HtmlRenderStoreErro
 }
 
 export type HtmlRenderPrepareError =
+  | HtmlRenderSourceError
+  | HtmlRenderOpenUiError
   | HtmlRenderImagesNotFoundError
   | HtmlRenderImageTooLargeError
   | HtmlRenderPageTooLargeError
@@ -121,17 +160,19 @@ export class HtmlRender extends Context.Service<
   HtmlRender,
   {
     readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
-    readonly publish: (input: {
-      readonly threadId: ThreadId;
-      readonly html: string;
-      readonly title: string;
-      readonly height: number;
-    }) => Effect.Effect<HtmlRenderReference, HtmlRenderPrepareError | HtmlRenderStoreError>;
-    readonly preview: (input: {
-      readonly html: string;
-      readonly width?: number | undefined;
-      readonly appearance?: ThemeAppearance | undefined;
-    }) => Effect.Effect<
+    readonly publish: (
+      input: HtmlRenderSource & {
+        readonly threadId: ThreadId;
+        readonly title: string;
+        readonly height: number;
+      },
+    ) => Effect.Effect<HtmlRenderReference, HtmlRenderPrepareError | HtmlRenderStoreError>;
+    readonly preview: (
+      input: HtmlRenderSource & {
+        readonly width?: number | undefined;
+        readonly appearance?: ThemeAppearance | undefined;
+      },
+    ) => Effect.Effect<
       HtmlPreview,
       | Exclude<HtmlRenderPrepareError, HtmlRenderImagesNotFoundError>
       | PreviewBrowser.PreviewBrowserInstallError
@@ -409,13 +450,17 @@ const make = Effect.gen(function* () {
     return inlined.html;
   });
 
-  const publish = Effect.fn("HtmlRender.publish")(function* (input: {
-    readonly threadId: ThreadId;
-    readonly html: string;
-    readonly title: string;
-    readonly height: number;
-  }) {
-    const html = yield* prepare(input.html);
+  const publish = Effect.fn("HtmlRender.publish")(function* (
+    input: HtmlRenderSource & {
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly height: number;
+    },
+  ) {
+    const page = yield* pageFromSource(input);
+    const html = yield* prepare(page.html);
+    // Providers report the tool input, so the kept page is keyed by what the agent sent.
+    const sent = { html: page.source, title: input.title, height: input.height };
     // The `-html` id suffix makes the asset route serve it as a sandboxed text/html document.
     const attachmentId = createAttachmentId(input.threadId, "html");
     const filePath =
@@ -443,7 +488,7 @@ const make = Effect.gen(function* () {
           ...(heights === undefined ? {} : { heights }),
         };
         return mcpSessions
-          .recordHtmlRender(input.threadId, input, reference)
+          .recordHtmlRender(input.threadId, sent, reference)
           .pipe(Effect.as(reference));
       }),
       // An interrupted publish must leave neither an attachment nor a recoverable reference.
@@ -451,7 +496,7 @@ const make = Effect.gen(function* () {
         Effect.all(
           [
             fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore),
-            mcpSessions.takeHtmlRender(input.threadId, input, baseReference).pipe(Effect.ignore),
+            mcpSessions.takeHtmlRender(input.threadId, sent, baseReference).pipe(Effect.ignore),
           ],
           { discard: true },
         ),
@@ -459,18 +504,20 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const preview = Effect.fn("HtmlRender.preview")(function* (input: {
-    readonly html: string;
-    readonly width?: number | undefined;
-    readonly appearance?: ThemeAppearance | undefined;
-  }) {
+  const preview = Effect.fn("HtmlRender.preview")(function* (
+    input: HtmlRenderSource & {
+      readonly width?: number | undefined;
+      readonly appearance?: ThemeAppearance | undefined;
+    },
+  ) {
+    const { html: pageHtml } = yield* pageFromSource(input);
     const width = Math.min(
       MAX_PREVIEW_WIDTH,
       Math.max(MIN_PREVIEW_WIDTH, Math.round(input.width ?? HTML_RENDER_COLUMN_WIDTH)),
     );
     const appearance = input.appearance ?? "dark";
-    yield* rejectViewportHeight(input.html);
-    const inlined = yield* inline(input.html);
+    yield* rejectViewportHeight(pageHtml);
+    const inlined = yield* inline(pageHtml);
     const executable = yield* previewBrowser.executable;
     const theme = htmlRenderTheme(
       appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS,

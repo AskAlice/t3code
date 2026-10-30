@@ -16,6 +16,7 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
+  readHtmlRenderPromptRequest,
 } from "@t3tools/shared/htmlRender";
 import {
   isMacPlatform,
@@ -37,6 +38,7 @@ import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { shortcutConflictKey } from "~/keybindings";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
@@ -266,6 +268,11 @@ export function HtmlRenderDocument(props: {
     const imageRequest = readHtmlRenderImageRequest(event.data);
     if (imageRequest !== undefined) {
       setExpandedImage({ images: [{ src: imageRequest.src, name: imageRequest.name }], index: 0 });
+      return;
+    }
+    const promptRequest = readHtmlRenderPromptRequest(event.data);
+    if (promptRequest !== undefined && props.threadRef !== undefined) {
+      useComposerDraftStore.getState().setPrompt(props.threadRef, promptRequest.text);
     }
   });
   // Attach at commit because a fast page may post its initial height before passive effects run.

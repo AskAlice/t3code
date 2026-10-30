@@ -258,6 +258,50 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("publishes an OpenUI program as a page and keys it by the program", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const threadId = ThreadId.make("thread-openui-render");
+      const page = {
+        openui: [
+          "root = Stack([open, invoices])",
+          'open = Stat("Open", "7")',
+          'invoices = Table(["Client", "Note"], [["Acme", "</script><b>"]])',
+        ].join("\n"),
+        title: "Invoices",
+        height: 240,
+      };
+
+      const reference = yield* htmlRender.publish({ threadId, ...page });
+
+      const stored = resolveAttachmentPathById({
+        attachmentsDir: config.attachmentsDir,
+        attachmentId: reference.attachmentId,
+      });
+      const html = yield* fileSystem.readFileString(stored ?? "");
+      expect(html).toContain('<style id="t3-theme">');
+      expect(html).toContain('id="openui-source">"root = Stack');
+      expect(html).not.toContain("</script><b>");
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(reference);
+
+      const invalid = yield* htmlRender
+        .publish({ threadId, ...page, openui: 'root = Stack([Chart("x"), missing])' })
+        .pipe(Effect.flip);
+      assert(invalid._tag === "HtmlRenderOpenUiError");
+      expect(invalid.message).toContain('Unknown component "Chart"');
+      expect(invalid.message).toContain("Undefined references: missing.");
+      const both = yield* htmlRender
+        .publish({ threadId, ...page, html: "<p>x</p>" })
+        .pipe(Effect.flip);
+      expect(both._tag).toBe("HtmlRenderSourceError");
+      const neither = yield* htmlRender.preview({}).pipe(Effect.flip);
+      expect(neither._tag).toBe("HtmlRenderSourceError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("removes the page when publishing is interrupted", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-html-cancel");

@@ -1,0 +1,46 @@
+{
+  "name": "@t3tools/openui",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./library": {
+      "types": "./src/library.ts",
+      "import": "./src/library.ts"
+    },
+    "./page": {
+      "types": "./src/page.ts",
+      "import": "./src/page.ts"
+    },
+    "./react": {
+      "types": "./src/react.tsx",
+      "import": "./src/react.tsx"
+    },
+    "./styles": {
+      "types": "./src/styles.ts",
+      "import": "./src/styles.ts"
+    }
+  },
+  "scripts": {
+    "prepare": "node scripts/build-runtime.ts",
+    "build": "node scripts/build-runtime.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@openuidev/lang-core": "1.0.2",
+    "@openuidev/react-lang": "1.0.2",
+    "@t3tools/shared": "workspace:*",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "*"
+  }
+}

@@ -244,6 +244,8 @@ const SIZE_CHANGED_METHOD = "ui/notifications/size-changed";
 const SHORTCUTS_METHOD = "t3/notifications/shortcuts";
 const KEY_DOWN_METHOD = "t3/notifications/keydown";
 const OPEN_IMAGE_METHOD = "t3/notifications/open-image";
+/** Asks the host to put text in the thread's composer; the reader still sends it. */
+export const HTML_RENDER_PROMPT_METHOD = "t3/notifications/prompt";
 
 export function readHtmlRenderContentHeight(data: unknown): number | undefined {
   if (typeof data !== "object" || data === null) return undefined;
@@ -287,6 +289,17 @@ export function readHtmlRenderImageRequest(
   if (typeof src !== "string" || !/^(?:https?:\/\/|data:image\/)/i.test(src)) return undefined;
   const label = typeof name === "string" ? name.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) : "";
   return { src, name: label || "Image" };
+}
+
+export function readHtmlRenderPromptRequest(data: unknown): { readonly text: string } | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== HTML_RENDER_PROMPT_METHOD) return undefined;
+  if (typeof params !== "object" || params === null) return undefined;
+  const { text } = params as Record<string, unknown>;
+  return typeof text === "string" && text.trim() !== ""
+    ? { text: text.slice(0, 20_000) }
+    : undefined;
 }
 
 export function readHtmlRenderKeyDown(data: unknown):

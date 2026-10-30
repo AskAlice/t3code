@@ -209,6 +209,20 @@ describe("ChatMarkdown streaming", () => {
     }
   });
 
+  it("draws an openui block with T3 components once its fence closes", async () => {
+    setup();
+    const message = (text: string, isStreaming = false) => (
+      <ChatMarkdown cwd="/tmp/project" text={text} isStreaming={isStreaming} />
+    );
+    const program = '```openui\nroot = Stack([Stat("Open", "7"), Badge("Overdue", "danger")])\n```';
+    await using screen = await render(message(program.slice(0, -3), true));
+    expect(screen.container.querySelector(".openui")).toBeNull();
+
+    await screen.rerender(message(program));
+    await expect.element(screen.getByText("Overdue")).toBeVisible();
+    expect(screen.container.querySelector(".oui-stat-value")?.textContent).toBe("7");
+  });
+
   it("edits the current task text and marker after reusing a renderer", async () => {
     setup();
     let editedText: string | undefined;

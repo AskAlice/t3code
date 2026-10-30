@@ -190,6 +190,7 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
+import { MarkdownOpenUiCodeBlock } from "./chat/MarkdownOpenUiCodeBlock";
 import { MarkdownTable } from "./chat/MarkdownTable";
 import { MarkdownDetails } from "./chat/MarkdownDetails";
 import {
@@ -1551,6 +1552,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
       onRunShellCommand,
       inline,
       mathEnabled,
+      openDeferredMarkdownLink,
+      threadRef,
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
     const codeBlock = extractCodeBlock(children);
@@ -1601,6 +1604,22 @@ const CHAT_MARKDOWN_COMPONENTS = {
         >
           {highlightedCode}
         </MarkdownMermaidCodeBlock>
+      );
+    }
+    if (language === "openui") {
+      return (
+        <MarkdownOpenUiCodeBlock
+          code={codeBlock.code}
+          fenceTitle={fenceTitle}
+          theme={resolvedTheme}
+          isStreaming={isStreaming && !isClosedCodeFence(node, text, codeBlock.code)}
+          threadRef={threadRef}
+          onOpenUrl={(url) =>
+            void openDeferredMarkdownLink(url).catch((cause: unknown) => console.error(cause))
+          }
+        >
+          {highlightedCode}
+        </MarkdownOpenUiCodeBlock>
       );
     }
     return (

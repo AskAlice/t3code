@@ -41,7 +41,12 @@ export class McpProviderSessions extends Context.Service<
     // A reported attachment consumes that exact page; otherwise only unique input matches count.
     readonly takeHtmlRender: (
       threadId: ThreadId,
-      input: { readonly html?: unknown; readonly title?: unknown; readonly height?: unknown },
+      input: {
+        readonly html?: unknown;
+        readonly openui?: unknown;
+        readonly title?: unknown;
+        readonly height?: unknown;
+      },
       reported?: HtmlRenderReference,
     ) => Effect.Effect<HtmlRenderReference | undefined>;
   }
@@ -49,9 +54,15 @@ export class McpProviderSessions extends Context.Service<
 
 const matchingPageIndex = (
   kept: ReadonlyArray<KeptHtmlRender>,
-  input: { readonly html?: unknown; readonly title?: unknown; readonly height?: unknown },
+  input: {
+    readonly html?: unknown;
+    readonly openui?: unknown;
+    readonly title?: unknown;
+    readonly height?: unknown;
+  },
 ): number => {
-  const html = input.html;
+  // An OpenUI call is keyed by its program, the input the provider reports.
+  const html = input.html ?? input.openui;
   if (typeof html !== "string" || html.length === 0) {
     return -1;
   }
