@@ -382,24 +382,9 @@ it("rejects partial WebMCP results from an unexpectedly terminated replay", () =
     });
     assert.throws(
       () =>
-        gradeSample(
-          {
-            webmcp: {
-              tabId: "tab_1",
-              origin: "https://acme.dev",
-              tools: [{ name: "list_notes", description: "List notes." }],
-              calls: [{ tool: "list_notes" }],
-              notCalls: ["delete_note"],
-            },
-          },
-          {
-            calls: [
-              { step: 0, tool: "preview_evaluate", input: { tabId: "tab_1", expression: "1" } },
-            ],
-            text: "",
-            stopReason: "end_turn",
-          },
-        ),
+        executeWebMcp([["1"]], "https://acme.dev", [
+          { name: "list_notes", description: "List notes." },
+        ]),
       /WebMCP replay terminated|ETIMEDOUT|ENOBUFS/,
     );
   }
