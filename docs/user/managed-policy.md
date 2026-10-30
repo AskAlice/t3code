@@ -11,15 +11,27 @@ Deploy the policy one way per machine:
 | OS      | Native                                                              | File                                              |
 | ------- | ------------------------------------------------------------------- | ------------------------------------------------- |
 | macOS   | Configuration profile for `com.t3tools.t3code`                      | `/Library/Application Support/T3Code/policy.json` |
-| Windows | `Policy` string value under `HKLM\SOFTWARE\Policies\T3Tools\T3Code` | `C:\ProgramData\T3Code\policy.json`               |
+| Windows | `Policy` string value under `HKLM\SOFTWARE\Policies\T3Tools\T3Code` | `C:\Program Files\T3Code\policy.json`             |
 | Linux   |                                                                     | `/etc/t3code/policy.json`                         |
 
 - **macOS profile:** add a custom settings payload for `com.t3tools.t3code` whose keys are the
   policy's top-level keys (`schemaVersion`, `organization`, `settings`, `limits`), with nested
-  dictionaries for the rest. Install it as a device profile; user profiles are ignored.
+  dictionaries for the rest. Install it as a device profile; user profiles are ignored. To make
+  the payload from a policy file you checked, run
+  `plutil -convert xml1 -o com.t3tools.t3code.plist policy.json` and upload the result.
 - **Windows registry:** set `Policy` (`REG_SZ`) to the whole policy as one line of JSON, from
-  Group Policy Preferences, an Intune script, or `reg add`.
-- **File:** make it writable only by administrators.
+  Group Policy Preferences or an Intune script. In PowerShell, as an administrator:
+
+  ```powershell
+  $json = (Get-Content -Raw -Encoding UTF8 policy.json) -replace '\r?\n\s*', ''
+  New-Item -Path HKLM:\SOFTWARE\Policies\T3Tools\T3Code -Force | Out-Null
+  Set-ItemProperty -Path HKLM:\SOFTWARE\Policies\T3Tools\T3Code -Name Policy -Value $json -Type String
+  ```
+
+- **File:** make it and its folder writable only by administrators.
+
+On a managed Windows machine, the desktop app does not run a WSL environment: a server inside WSL
+cannot read the Windows policy.
 
 T3 Code refuses to start if a machine has both a native policy and a file. It reads the policy when
 the server starts, so restart the app after you deploy or change it. Without a policy, every
@@ -110,9 +122,12 @@ Providers still read their own configuration from the user's home directory, for
 - `remote`: phones, other computers, app.t3.codes, and anything reached over the network.
 
 Without `remote`, the server only listens on this machine, does not create pairing links, and
-signs out devices that paired earlier. T3 Connect is a way for remote clients to reach the
-machine, so it turns off too. To keep remote access but turn off only T3 Connect, set
-`"connect": false`.
+signs out devices that paired earlier. The desktop app starts with network access and Tailscale
+Serve off, whatever the user chose. T3 Connect is a way for remote clients to reach the machine, so
+it turns off too. To keep remote access but turn off only T3 Connect, set `"connect": false`.
+
+A server that accepts `remote` clients listens on the network, so browsers on this machine can
+reach it too.
 
 ### Other capabilities
 
@@ -120,8 +135,9 @@ machine, so it turns off too. To keep remote access but turn off only T3 Connect
   kept but do not run.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
-- `telemetry: false`: T3 Code sends no [product usage data](./telemetry.md) or relay connection
-  traces, whatever the environment says. A policy cannot turn them on.
+- `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
+  relay connection traces, whatever the environment says. A policy cannot turn them on. A browser
+  that opens the server, such as app.t3.codes, still sends its own relay traces.
 
 ### Providers
 
@@ -164,3 +180,7 @@ The policy controls what T3 Code does. Agents still run through each provider's 
 user can also run outside T3 Code. To restrict those CLIs, use their own managed configuration, such
 as Claude Code's managed settings. A user with administrator rights on the machine can edit or
 remove the policy.
+
+T3 Code enforces the policy itself. A version from before managed policy, or a build a user
+changed, ignores it. To control which builds can run, use your device management tool's
+application controls.
