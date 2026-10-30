@@ -1132,7 +1132,7 @@ function ScheduledTaskDestination({
         </p>
       ) : (
         <div className="space-y-1 text-sm">
-          <p className="truncate">{thread?.title.trim() || `Thread ${ref.threadId}`}</p>
+          <p className="wrap-anywhere">{thread?.title.trim() || `Thread ${ref.threadId}`}</p>
           <p className="text-muted-foreground">
             Each run continues this conversation, in its workspace and with its current model.
           </p>
