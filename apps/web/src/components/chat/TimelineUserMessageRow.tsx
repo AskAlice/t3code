@@ -526,7 +526,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             className={cn(
               "bg-background/70",
               image.source?.kind === "snap-shot" && image.previewUrl
-                ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
+                ? cn(
+                    SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
+                    "col-span-2",
+                    standaloneMedia && "justify-self-end",
+                  )
                 : loneImage
                   ? cn(MEDIA_EDGE_CLASS_NAME, "overflow-hidden rounded-2xl")
                   : collage
@@ -538,7 +542,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                           index === regularImages.length - 1 &&
                           "col-span-2",
                       )
-                    : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+                    : standaloneMedia
+                      ? cn(MEDIA_EDGE_CLASS_NAME, "aspect-[4/3] overflow-hidden rounded-2xl")
+                      : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
             )}
           >
             {image.previewUrl ? (
