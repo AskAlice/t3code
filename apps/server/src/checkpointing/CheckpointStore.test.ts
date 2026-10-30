@@ -531,6 +531,11 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           fromCheckpointRef: checkpointRefForThreadTurn(threadId, 2),
           toCheckpointRef: checkpointRefForThreadTurn(threadId, 3),
         };
+        const renameRefs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 4),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 5),
+        };
         const commitBeforeTurn = (contents: string) =>
           Effect.gen(function* () {
             yield* writeTextFile(NodePath.join(tmp, "x.txt"), contents);
@@ -566,6 +571,19 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           checkpointRef: discardRefs.toCheckpointRef,
         });
         expect(yield* checkpointStore.listAuthoredPaths(discardRefs)).toEqual(new Set(["x.txt"]));
+
+        yield* git(tmp, ["reset", "--hard", "backup"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: renameRefs.fromCheckpointRef,
+        });
+        yield* git(tmp, ["branch", "-m", "renamed"]);
+        yield* git(tmp, ["reset", "--hard", "HEAD~1"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: renameRefs.toCheckpointRef,
+        });
+        expect(yield* checkpointStore.listAuthoredPaths(renameRefs)).toEqual(new Set(["x.txt"]));
       }),
     );
   });

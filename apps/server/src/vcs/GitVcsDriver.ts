@@ -1397,10 +1397,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
-      // Commits HEAD left behind count as discarded work (reset, amend, rebase) unless
-      // both checkpoints recorded a branch and they differ, which is a branch switch.
+      // Commits HEAD left behind count as discarded work (reset, amend, rebase) unless the
+      // turn switched branches and the branch it left still holds them.
       const switchedBranch =
-        startBranch !== undefined && endBranch !== undefined && startBranch !== endBranch;
+        startBranch !== undefined &&
+        endBranch !== undefined &&
+        startBranch !== endBranch &&
+        (yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["merge-base", "--is-ancestor", startHead, startBranch],
+          allowNonZeroExit: true,
+        })).exitCode === 0;
       const pathLists = yield* Effect.all(
         [
           listPaths(["diff", startHead, `${input.fromCheckpointRef}^{commit}`]),
