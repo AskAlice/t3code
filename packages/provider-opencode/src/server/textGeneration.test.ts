@@ -25,6 +25,7 @@ const runtimeMock = {
     startCalls: [] as string[],
     promptUrls: [] as string[],
     promptParts: [] as ReadonlyArray<unknown>[],
+    promptVariants: [] as Array<string | undefined>,
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateCalls: 0,
@@ -46,6 +47,7 @@ const runtimeMock = {
     this.state.startCalls.length = 0;
     this.state.promptUrls.length = 0;
     this.state.promptParts.length = 0;
+    this.state.promptVariants.length = 0;
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateCalls = 0;
@@ -126,11 +128,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           return { data: true };
         },
         prompt: async (
-          input: { readonly parts: ReadonlyArray<unknown> },
+          input: { readonly parts: ReadonlyArray<unknown>; readonly variant?: string },
           options?: { readonly signal?: AbortSignal },
         ) => {
           runtimeMock.state.promptUrls.push(baseUrl);
           runtimeMock.state.promptParts.push(input.parts);
+          runtimeMock.state.promptVariants.push(input.variant);
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
@@ -397,6 +400,22 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
           textPartCount: 1,
         });
         expect(error.cause).not.toHaveProperty("cause");
+      }),
+    ),
+  );
+
+  it.effect("sends no variant when the selection uses OpenCode's default variant", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        yield* textGeneration.generateCommitMessage({
+          ...DEFAULT_COMMIT_MESSAGE_INPUT,
+          modelSelection: {
+            ...DEFAULT_TEST_MODEL_SELECTION,
+            options: [{ id: "variant", value: "default" }],
+          },
+        });
+
+        expect(runtimeMock.state.promptVariants).toEqual([undefined]);
       }),
     ),
   );
