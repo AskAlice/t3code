@@ -107,10 +107,12 @@ function parseRegistryPolicy(output: string): string | undefined {
 }
 
 const decodeJsonExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+// Strict: keys beside the wrapper, or more than one entry, decode as a plain document and fail.
 const decodeForcedExit = Schema.decodeUnknownExit(
   Schema.Struct({
     Forced: Schema.Tuple([Schema.Struct({ mcx_preference_settings: Schema.Unknown })]),
   }),
+  { onExcessProperty: "error" },
 );
 
 /**

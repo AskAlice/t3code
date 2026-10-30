@@ -76,11 +76,24 @@ describe("readManagedPolicy", () => {
       const file = { [managedPolicyPath("darwin")]: policy };
 
       assert.equal(yield* read("darwin", profile, plutil), MACOS_MANAGED_PREFERENCES_PATH);
-      const forced = JSON.stringify({ Forced: [{ mcx_preference_settings: JSON.parse(policy) }] });
+      const plist = (contents: object) => ({
+        "/usr/bin/plutil": { stdout: JSON.stringify(contents), exitCode: 0 },
+      });
+      const settings = JSON.parse(policy);
       assert.equal(
-        yield* read("darwin", profile, { "/usr/bin/plutil": { stdout: forced, exitCode: 0 } }),
+        yield* read("darwin", profile, plist({ Forced: [{ mcx_preference_settings: settings }] })),
         MACOS_MANAGED_PREFERENCES_PATH,
       );
+      // Keys beside the wrapper, or a second entry, are refused rather than dropped or merged.
+      for (const ambiguous of [
+        { Forced: [{ mcx_preference_settings: settings }], limits: { telemetry: false } },
+        { Forced: [{ mcx_preference_settings: settings }, { mcx_preference_settings: settings }] },
+      ]) {
+        assert.include(
+          yield* read("darwin", profile, plist(ambiguous)),
+          "does not match the policy schema",
+        );
+      }
       assert.equal(yield* read("darwin", file), managedPolicyPath("darwin"));
       assert.isUndefined(yield* read("darwin", {}));
       assert.include(
