@@ -247,6 +247,15 @@ describe("links that arrive while the app runs", () => {
     });
   });
 
+  it("a draft page link keeps the open draft it names", () => {
+    const root = follow(open("Home"), "new/draft?environmentId=env-1&projectId=project-1");
+    const next = follow(root, "new/draft/files?environmentId=env-1&projectId=project-1");
+    expect(next.routes.map((route) => route.name)).toEqual(["Home", "Thread", "NewTaskFiles"]);
+    expect(next.routes.slice(0, 2).map((route) => route.key)).toEqual(
+      root.routes.slice(0, 2).map((route) => route.key),
+    );
+  });
+
   it("a repeated settings link reopens its page so the link's params apply again", () => {
     const root = follow(open("Home"), "settings/usage?tab=limits");
     const next = follow(root, "settings/usage?tab=limits");
