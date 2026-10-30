@@ -2027,6 +2027,33 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
     ),
   );
 
+  it.effect(
+    "keeps an idle compaction choice saved before idleCompaction over a policy default",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({ compactIdleThreads: false }),
+        );
+
+        assert.equal((yield* service.getSettings).idleCompaction, "onReturn");
+        yield* service.updateSettings({ defaultAutoPull: true });
+        assert.equal((yield* service.getSettings).idleCompaction, "onReturn");
+        assert.include(yield* fs.readFileString(config.settingsPath), '"onReturn"');
+      }).pipe(
+        Effect.provide(
+          layerServerSettings({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            settings: { idleCompaction: { value: "beforeCacheExpires", locked: false } },
+          }),
+        ),
+      ),
+  );
+
   it.effect("lays locks over the user's own and per-project values without persisting them", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

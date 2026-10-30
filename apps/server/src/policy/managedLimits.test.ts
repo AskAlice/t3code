@@ -148,7 +148,7 @@ it.effect(
         { stdout: "not json", exitCode: 0 },
       ]) {
         const unread = yield* close({ status }).pipe(Effect.flip);
-        assert.include(unread.message, "waits until Tailscale Serve can be checked");
+        assert.include(unread.message, "does not start until Tailscale Serve can be checked");
       }
       // Tailscale down, or not installed, forwards nothing now.
       yield* close({

@@ -100,8 +100,15 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
       TailscaleCommandExitError: (error) =>
         NOTHING_TO_CLOSE.has(error.stderrDiagnostic) ? Effect.succeed([]) : Effect.fail(error),
     }),
+    // Tailscale errors carry only labelled diagnostics, never raw stderr, so they are safe to log.
+    Effect.tapError((cause) =>
+      Effect.logWarning("Tailscale Serve could not be checked", { cause }),
+    ),
     Effect.mapError(() =>
-      refuseRemoteClients(policy, "so the server waits until Tailscale Serve can be checked"),
+      refuseRemoteClients(
+        policy,
+        "so the server does not start until Tailscale Serve can be checked",
+      ),
     ),
   );
   for (const servePort of servePorts) {

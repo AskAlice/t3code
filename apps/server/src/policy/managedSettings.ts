@@ -410,6 +410,17 @@ export function makeManagedSettings(
     return { _tag: "Allowed", settings: decodeSettings(kept) };
   };
 
+  // A file from before a setting replaced its legacy key holds the user's choice in that key, which
+  // a default for the new setting would otherwise override.
+  const withoutLegacyChoices = (persisted: unknown): unknown => {
+    if (!isRecord(persisted) || !isRecord(defaultsTree)) return defaultsTree;
+    const kept = { ...defaultsTree };
+    for (const [legacy, source] of DERIVED_FROM) {
+      if (persisted[legacy] !== undefined && persisted[source] === undefined) delete kept[source];
+    }
+    return kept;
+  };
+
   const keepStored: ManagedSettings["keepStored"] =
     defaults.length === 0
       ? undefined
@@ -443,7 +454,7 @@ export function makeManagedSettings(
     _tag: "Valid",
     settings: {
       keepStored,
-      withDefaults: (persisted) => fillMissing(persisted, defaultsTree),
+      withDefaults: (persisted) => fillMissing(persisted, withoutLegacyChoices(persisted)),
       defaults: syncIdleCompaction(
         decodeSettings(
           defaults.reduce<unknown>(
