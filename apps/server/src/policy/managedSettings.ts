@@ -1,10 +1,12 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  globalIdleCompaction,
   isRuntimeModeAbove,
   type ManagedPolicySetting,
   ProjectSettingsOverrides,
   type RuntimeMode,
   ServerSettings,
+  withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -334,6 +336,7 @@ export function makeManagedSettings(
     decodedValue: getPath(decoded.value, entry.segments),
   }));
   const lockedPaths = locks.map((entry) => entry.path);
+  const idleCompactionLocked = lockedPaths.includes("idleCompaction");
   const lockCache = new WeakMap<ServerSettings, ServerSettings>();
 
   const applyLocks = (current: ServerSettings): ServerSettings => {
@@ -354,8 +357,12 @@ export function makeManagedSettings(
               encodeSettings(current),
             ),
           );
+    // Shipped clients still read the legacy switch, which must follow a locked idleCompaction.
+    const derived = idleCompactionLocked
+      ? withIdleCompaction(locked, globalIdleCompaction(locked))
+      : locked;
     const result =
-      maxRuntimeMode === undefined ? locked : clampDefaultRuntimeModes(locked, maxRuntimeMode);
+      maxRuntimeMode === undefined ? derived : clampDefaultRuntimeModes(derived, maxRuntimeMode);
     lockCache.set(current, result);
     return result;
   };
