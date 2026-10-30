@@ -304,7 +304,8 @@ export interface ThreadDetailScreenProps {
 
 const USAGE_LIMITS_PANEL_GAP = 12;
 const USAGE_LIMITS_PANEL_MIN_HEIGHT = 44;
-const PENDING_APPROVAL_SLOT_BOTTOM_PADDING = 12;
+// The approval slot's `pb-3` at NativeWind's 14px rem.
+const PENDING_APPROVAL_SLOT_BOTTOM_PADDING = 10.5;
 
 const USER_INPUT_TOGGLE_TIMING = {
   duration: USER_INPUT_TOGGLE_DURATION_MS,
@@ -1508,13 +1509,12 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                   ) : null}
                   {props.activePendingApproval || props.activePendingUserInput ? (
                     <Animated.View
-                      className="shrink-0 gap-3 px-4"
-                      style={{
-                        paddingBottom:
-                          activeUserInputRequestId !== null
-                            ? composerBottomInset
-                            : PENDING_APPROVAL_SLOT_BOTTOM_PADDING,
-                      }}
+                      className="shrink-0 gap-3 px-4 pb-3"
+                      style={
+                        activeUserInputRequestId !== null
+                          ? { paddingBottom: composerBottomInset }
+                          : undefined
+                      }
                       entering={FadeInDown.duration(220)}
                       exiting={FadeOut.duration(140)}
                     >

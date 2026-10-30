@@ -86,18 +86,16 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
             ) : null}
           </Pressable>
         ) : null}
-        {!canRespond ? (
-          <Text className="font-sans text-sm leading-5 text-foreground-muted">
-            The provider process for this request is no longer available. Interrupt or restart the
-            run to continue.
-          </Text>
-        ) : null}
-        {warning ? (
-          <Text className="font-sans text-xs leading-normal text-warning-foreground">
-            {warning}
-          </Text>
-        ) : null}
       </ScrollView>
+      {!canRespond ? (
+        <Text className="font-sans text-sm leading-5 text-foreground-muted">
+          The provider process for this request is no longer available. Interrupt or restart the run
+          to continue.
+        </Text>
+      ) : null}
+      {warning ? (
+        <Text className="font-sans text-xs leading-normal text-warning-foreground">{warning}</Text>
+      ) : null}
       <View className="flex-row flex-wrap gap-2.5">
         {options.map((option) => (
           <Button
