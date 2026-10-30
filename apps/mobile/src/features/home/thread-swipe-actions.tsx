@@ -49,7 +49,7 @@ const ACTION_CIRCLE_SIZE = 36;
 const ACTION_ICON_SIZE = 15;
 const COMPACT_ACTION_CIRCLE_SIZE = 28;
 const COMPACT_ACTION_ICON_SIZE = 13;
-// "Unarchive", the longest label, fills its slot at about 1.12x.
+// At the default app text size, "Unarchive", the longest label, fills its slot at about 1.12x.
 const ACTION_LABEL_MAX_FONT_SCALE = 1.1;
 
 const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
@@ -676,7 +676,7 @@ function SwipeActionButton(props: {
           />
         </Animated.View>
       </View>
-      {/* Offset rather than padded so the gap does not move the circle at 1x. */}
+      {/* An offset, not padding: padding would grow the box and move the circle at 1x. */}
       <Animated.View
         style={[
           { justifyContent: "center", minHeight: 14, top: props.compact ? 0 : 2 },
