@@ -146,6 +146,11 @@ export function managedUpdatesMessage(organization: string): string {
   return `${organization} manages T3 Code updates.`;
 }
 
+/** The message when the policy allows only stable releases. */
+export function managedNightlyDeniedMessage(organization: string): string {
+  return `${managedUpdatesMessage(organization)} Only stable releases can be installed.`;
+}
+
 /** Whether `path` is locked itself, sits inside a locked setting, or contains one. */
 export function isManagedSettingPath(
   summary: Pick<ManagedPolicySummary, "lockedSettings"> | undefined,
