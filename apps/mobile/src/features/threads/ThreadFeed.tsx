@@ -34,7 +34,6 @@ import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
   resolveUserMessageFileCards,
-  resolveUserMessageGrouping,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -226,7 +225,9 @@ import {
 import {
   appendGuestPendingMessages,
   appendPendingThreadMessages,
+  createThreadFeedGrouping,
   isCompactionCommandFeedEntry,
+  type GroupedThreadFeedRow,
   type ThreadFeedRow,
 } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
@@ -857,7 +858,6 @@ function UserMessageMedia(props: {
 }) {
   const attachments = [...props.pendingAttachments, ...props.attachments];
   const collage = attachments.length > 1 && attachments.every(isImageAttachment);
-  const gallery = composerImageGallery(props.pendingAttachments);
   const imageProps = (index: number) => ({
     className: "w-full bg-user-bubble-foreground/15",
     maxWidth: collage ? undefined : props.maxWidth,
@@ -898,7 +898,6 @@ function UserMessageMedia(props: {
           ) : (
             <PendingMessageMedia
               attachment={attachment}
-              gallery={gallery}
               {...imageProps(index)}
               onPressPreview={props.onPressPreview}
               onPlaybackStart={props.onPlaybackStart}
@@ -979,13 +978,13 @@ function UserMessageMedia(props: {
 
 function PendingMessageMedia(props: {
   readonly attachment: QueuedThreadMessage["attachments"][number];
-  readonly gallery: ReturnType<typeof composerImageGallery>;
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
   readonly onPressPreview: (source: FilePreviewSource) => void;
   readonly onPlaybackStart: () => void;
 }) {
+  const withGallery = useFilePreviewGallery();
   const { attachment } = props;
   const fileBacked = isFileBackedComposerAttachment(attachment);
   const preview = useLocalAttachmentPreview(fileBacked ? attachment : null);
@@ -997,7 +996,7 @@ function PendingMessageMedia(props: {
         accessibilityLabel={`Open ${attachment.name}`}
         onPress={() => {
           const source = composerImageGallery([attachment])[0];
-          if (source) props.onPressPreview({ ...source, gallery: props.gallery });
+          if (source) props.onPressPreview(withGallery(source));
         }}
       >
         <MessageImage
@@ -1616,7 +1615,7 @@ function renderFeedEntry(
     readonly contentWidth: number;
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
-    readonly userMessageGrouping: ReturnType<typeof resolveUserMessageGrouping>;
+    readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
   },
 ) {
   const entry = info.item;
@@ -2009,14 +2008,17 @@ function renderFeedEntry(
                         key={attachment.id}
                         accessibilityRole="imagebutton"
                         accessibilityLabel={`Open ${attachment.name}`}
-                        onPress={() =>
-                          props.onPressPreview({
-                            kind: "image",
-                            name: attachment.name,
-                            uri: attachment.dataUrl ?? attachment.previewUri,
-                            gallery: composerImageGallery(entry.pendingMessage?.attachments ?? []),
-                          })
-                        }
+                        onPress={() => {
+                          const source = composerImageGallery([attachment])[0];
+                          if (source)
+                            props.onPressPreview({
+                              ...source,
+                              gallery: composerImageGallery(
+                                entry.pendingMessage?.attachments ?? [],
+                                props.environmentId,
+                              ),
+                            });
+                        }}
                       >
                         <Image
                           source={{ uri: attachment.previewUri }}
@@ -3162,6 +3164,12 @@ export const ThreadFeed = memo(function ThreadFeed({
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
+  const [groupFeed] = useState(createThreadFeedGrouping);
+  const groupedFeed = groupFeed(presentedFeed, {
+    workflowOpeningMessageId: workflowOpening?.messageId,
+    setupAnchorIndex:
+      props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
+  });
   // The empty↔filled key below remounts the list and resets its imperative
   // content-inset override. Seed each fresh instance as it attaches with the
   // current overlay height before the scroll integration's next reaction;
@@ -3481,16 +3489,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     }
   }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef]);
 
-  const groupingMessage = (index: number) => {
-    const entry = presentedFeed[index];
-    return entry?.type === "message" &&
-      !isCompactionCommandFeedEntry(entry) &&
-      entry.message.id !== workflowOpening?.messageId
-      ? entry.message
-      : undefined;
-  };
-  const setupBreaksBurst = Boolean(props.worktreeSetup || props.setupWorkingStartedAt);
-  const renderItem = (info: { item: ThreadFeedRow; index: number }) => (
+  const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
     <Animated.View
       key={info.item.id}
       entering={disclosureToggleSettling ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION : undefined}
@@ -3503,15 +3502,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       >
         <ThreadMediaVisibility>
           {renderFeedEntry(info, {
-            userMessageGrouping: resolveUserMessageGrouping(
-              groupingMessage(info.index),
-              setupBreaksBurst && info.index - 1 === setupAnchorIndex
-                ? undefined
-                : groupingMessage(info.index - 1),
-              setupBreaksBurst && info.index === setupAnchorIndex
-                ? undefined
-                : groupingMessage(info.index + 1),
-            ),
+            userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
@@ -3634,8 +3625,8 @@ export const ThreadFeed = memo(function ThreadFeed({
             maintainVisibleContentPosition={
               followsEnd && !disclosureToggleSettling ? false : maintainVisibleContentPosition
             }
-            data={presentedFeed}
-            extraData={{ ...listAppearanceData, presentedFeed }}
+            data={groupedFeed}
+            extraData={listAppearanceData}
             renderItem={renderItem}
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
@@ -3772,7 +3763,7 @@ function MessageImageGalleryScope(props: {
     entry.type === "message"
       ? [
           ...messageImageGallery(entry.message, { environmentId, threadId, workspaceRoot }),
-          ...composerImageGallery(entry.pendingMessage?.attachments ?? []),
+          ...composerImageGallery(entry.pendingMessage?.attachments ?? [], environmentId),
         ]
       : [];
   return <FilePreviewGallery value={images}>{props.children}</FilePreviewGallery>;
