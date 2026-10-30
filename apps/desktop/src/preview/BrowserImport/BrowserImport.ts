@@ -71,9 +71,8 @@ export class BrowserImportPolicyError extends Schema.TaggedError<BrowserImportPo
 }
 
 /**
- * Read at each import so a newly deployed policy applies without a restart. A file that cannot be
- * read or decoded denies the import: cookies are credentials, and the server refuses to start on
- * the same file anyway.
+ * A policy that cannot be read or decoded denies the import: cookies are credentials, and the
+ * server refuses to start on the same policy anyway.
  */
 export const checkBrowserImportPolicy = Effect.fn("BrowserImport.checkPolicy")(function* <R>(
   readPolicy: Effect.Effect<
