@@ -165,9 +165,13 @@ describe("workspace root navigation", () => {
   });
 });
 
-const mocks = vi.hoisted(() => ({ split: false }));
+const mocks = vi.hoisted(() => ({ split: false, floating: false }));
 
+vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
+  useAndroidFloatingTabs: () => mocks.floating,
+}));
 vi.mock("react-native", () => ({
+  useWindowDimensions: () => ({ width: 400, height: 800 }),
   View: ({ children }: { children: ReactNode }) => createElement("div", null, children),
 }));
 vi.mock("react-native-safe-area-context", () => ({
@@ -200,7 +204,7 @@ vi.mock("../../components/ui/ScreenContent", () => ({
   ScreenContent: ({ children }: { children: ReactNode }) => createElement("div", null, children),
 }));
 vi.mock("../../components/ui/useAndroidControlSizing", () => ({
-  useAndroidControlSizing: () => ({ fabClearance: 64 }),
+  useAndroidControlSizing: () => ({ fabClearance: 64, scale: 1, fabSize: 56 }),
 }));
 vi.mock("../home/HomeRouteScreen", () => ({ HomeRouteScreen: () => null }));
 vi.mock("../pull-requests/PullRequestFilterMenuContext", () => ({
@@ -209,19 +213,28 @@ vi.mock("../pull-requests/PullRequestFilterMenuContext", () => ({
 }));
 vi.mock("../pull-requests/PullRequestsScreen", () => ({ PullRequestsScreen: () => null }));
 vi.mock("../pull-requests/PullRequestToolbar.android", () => ({ PullRequestToolbar: () => null }));
-vi.mock("./AndroidWorkspaceNavigation", () => ({ AndroidWorkspaceNavigation: () => null }));
+vi.mock("./AndroidWorkspaceNavigation", () => ({
+  AndroidWorkspaceNavigation: () => null,
+  FloatingWorkspaceTabs: () => null,
+}));
 vi.mock("./WorkspaceNoTabs", () => ({ WorkspaceNoTabs: () => null }));
 
-function setup(split: boolean) {
+function setup(split: boolean, floating: boolean) {
   mocks.split = split;
+  mocks.floating = floating;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   return { [Symbol.dispose]: () => vi.unstubAllGlobals() };
 }
 
-it.each([false, true])(
-  "keeps the Usage page mounted through layout transitions (split: %s)",
-  async (split) => {
-    using _actEnvironment = setup(split);
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "keeps the Usage page mounted through layout transitions (split: %s, floating: %s)",
+  async (split, floating) => {
+    using _actEnvironment = setup(split, floating);
     const container = document.createElement("div");
     const root = createRoot(container);
     using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
