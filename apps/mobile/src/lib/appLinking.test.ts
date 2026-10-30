@@ -206,6 +206,7 @@ describe("links that arrive while the app runs", () => {
       NewTaskFiles: "new/draft/files",
       Settings: "settings",
       SettingsAbout: "settings/about",
+      SettingsUsage: "settings/usage",
     },
   };
   const router = StackRouter({});
@@ -244,6 +245,16 @@ describe("links that arrive while the app runs", () => {
       stack: root.key,
       home: root.routes[0]?.key,
     });
+  });
+
+  it("a repeated settings link reopens its page so the link's params apply again", () => {
+    const root = follow(open("Home"), "settings/usage?tab=limits");
+    const next = follow(root, "settings/usage?tab=limits");
+    expect(next.routes.map((route) => route.name)).toEqual(["Home", "Settings", "SettingsUsage"]);
+    expect(next.routes.slice(0, 2).map((route) => route.key)).toEqual(
+      root.routes.slice(0, 2).map((route) => route.key),
+    );
+    expect(next.routes[2]?.key).not.toBe(root.routes[2]?.key);
   });
 
   it("a bare settings link over an open Settings page goes back to the Settings tab", () => {

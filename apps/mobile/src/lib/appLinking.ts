@@ -1,10 +1,6 @@
 import type { NavigationState, PartialState } from "@react-navigation/native";
 
-import {
-  settingsNavigationState,
-  settingsOpenIn,
-  type SettingsPageName,
-} from "../features/settings/settings-navigation";
+import { settingsNavigationState, settingsOpenIn } from "../features/settings/settings-navigation";
 import type { RootStackResetAction } from "./root-stack-reset";
 
 /**
@@ -131,8 +127,9 @@ function sameRoute(link: LinkRoute, live: NavigationState["routes"][number] | un
 }
 
 /**
- * A running app's link must keep the live root and routes' keys: the workspace navigator keys on
- * the root, and replacing it hangs a collapsed iOS split view. Settings opens as its button does.
+ * A running app's link must keep the live root and the keys of the routes under its page: the
+ * workspace navigator keys on the root, and replacing it hangs a collapsed iOS split view. The
+ * linked page itself opens fresh so its params apply again. Settings opens as its button does.
  * `fallback` is React Navigation's own action, whose reset rehydrates under new keys.
  */
 export function runningAppLinkAction<Action extends { readonly type: string }>(
@@ -143,14 +140,23 @@ export function runningAppLinkAction<Action extends { readonly type: string }>(
   if (!root) return fallback;
   if (settingsOpenIn(link.routes)) {
     const top = link.routes.at(-1)!;
-    const page = top.name === "Settings" ? undefined : (top.name as SettingsPageName);
-    const payload = settingsNavigationState(root, page, top.params);
-    return { type: "RESET", payload, target: root.key };
+    const routes = [
+      ...settingsNavigationState(root, undefined).routes,
+      ...(top.name === "Settings" ? [] : [{ name: top.name, params: top.params }]),
+    ];
+    return {
+      type: "RESET",
+      payload: { ...root, index: routes.length - 1, routes },
+      target: root.key,
+    };
   }
   if (fallback?.type !== "RESET") return fallback;
   const home = root.routes.find((route) => route.name === "Home");
   let leading = 0;
-  while (leading < link.routes.length && sameRoute(link.routes[leading]!, root.routes[leading])) {
+  while (
+    leading < link.routes.length - 1 &&
+    sameRoute(link.routes[leading]!, root.routes[leading])
+  ) {
     leading += 1;
   }
   const routes = link.routes.map((route, index) =>
