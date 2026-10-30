@@ -1685,4 +1685,40 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
   });
+
+  // regression: #27307 a workflow_dispatch suite on the head commit is missing from the rollup
+  it("moves status when the head commit gains or finishes a check suite the rollup leaves out", () => {
+    const fingerprint = (suites: ReadonlyArray<{ status: string; conclusion: string | null }>) =>
+      toPullRequestWatchFingerprint(
+        decodeWatched({
+          state: "OPEN",
+          mergeable: "MERGEABLE",
+          headRefOid: "abc123",
+          comments: { totalCount: 0, nodes: [] },
+          reviews: { totalCount: 0, nodes: [] },
+          reviewThreads: { totalCount: 0 },
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      checkRunCountsByState: [{ state: "IN_PROGRESS", count: 0 }],
+                      statusContextCountsByState: [{ state: "SUCCESS", count: 1 }],
+                    },
+                  },
+                  checkSuites: { nodes: suites },
+                },
+              },
+            ],
+          },
+        }),
+      ).status;
+    const reviewed = fingerprint([]);
+    const running = fingerprint([{ status: "IN_PROGRESS", conclusion: null }]);
+    const failed = fingerprint([{ status: "COMPLETED", conclusion: "FAILURE" }]);
+
+    expect(running, "a dispatched workflow started on the head commit").not.toBe(reviewed);
+    expect(failed, "that dispatched workflow failed").not.toBe(running);
+  });
 });

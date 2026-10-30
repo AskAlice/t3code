@@ -1961,6 +1961,80 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  // regression: #27307 a workflow_dispatch run on the head commit is missing from the rollup
+  it.effect.each([
+    { status: "in_progress", conclusion: null, expected: "pending", checksState: "pending" },
+    { status: "completed", conclusion: "failure", expected: "failure", checksState: "failing" },
+  ] as const)(
+    "reports a head commit check run the status rollup leaves out ($status $conclusion)",
+    ({ status, conclusion, expected, checksState }) =>
+      Effect.gen(function* () {
+        const answer = coreResponse({
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      nodes: [
+                        {
+                          __typename: "StatusContext",
+                          context: "CodeRabbit",
+                          state: "SUCCESS",
+                          targetUrl: null,
+                          createdAt: "2026-07-02T00:00:00Z",
+                          description: "Review completed",
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        });
+        const checkRuns = {
+          total_count: 1,
+          check_runs: [
+            {
+              id: 111101401583,
+              name: "ios",
+              head_sha: "abc123",
+              status,
+              conclusion,
+              started_at: "2026-07-02T00:01:00Z",
+              completed_at: conclusion === null ? null : "2026-07-02T00:05:00Z",
+              html_url: "https://github.com/acme/web/actions/runs/1/job/111101401583",
+              details_url: "https://github.com/acme/web/actions/runs/1/job/111101401583",
+              app: { slug: "github-actions" },
+              check_suite: { id: 1 },
+            },
+          ],
+        };
+        mockedExecute.mockImplementation((call) =>
+          Effect.succeed(
+            output(
+              encodeJson(
+                call.kind === "graphql"
+                  ? answer
+                  : call.path.startsWith("repos/acme/web/commits/abc123/check-runs")
+                    ? checkRuns
+                    : {},
+              ),
+            ),
+          ),
+        );
+        const provider = yield* GitHubPullRequestProvider.make;
+        const detail = yield* provider.getChangeRequest(pullRequestInput);
+        expect(
+          detail.checks.map((check) => [check.name, check.status]),
+          "a check run GitHub lists on the head commit but not in the PR's status rollup",
+        ).toEqual(expect.arrayContaining([["ios", expected]]));
+        expect(detail.checksState).toBe(checksState);
+      }),
+  );
+
   const branchToDelete = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
     data: {
       repository: {
