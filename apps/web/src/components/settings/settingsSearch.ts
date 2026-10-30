@@ -277,6 +277,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new thread project provider reasoning effort"],
   },
   {
+    id: "fallback-model",
+    title: "Fallback model",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["fallback agent new thread provider out of usage limit backup"],
+  },
+  {
     id: "default-permissions",
     title: "Permissions",
     to: "/settings/threads",
