@@ -1,8 +1,8 @@
 # Managed policy
 
-A managed policy lets an administrator configure T3 Code for every user on a machine. Deploy one
-file with your usual device management tool (Jamf, Kandji, Intune, Ansible). The T3 Code server
-on that machine follows it, whichever app connects: desktop, the browser, or mobile.
+A managed policy lets an administrator configure T3 Code for every user on a machine. Deploy it
+with your usual device management tool (Jamf, Kandji, Intune, Group Policy, Ansible). The T3 Code
+server on that machine follows it, whichever app connects: desktop, the browser, or mobile.
 
 ## Where the policy goes
 
@@ -51,8 +51,8 @@ users could never remove it. Lock the entry, or set provider fields with
 [`providers.instances`](#providers). A setting that can be empty, such as `defaultModelSelection`,
 is managed as a whole rather than one field inside it.
 
-T3 Code never writes policy values into the user's own settings. If you remove the file, users get
-back the settings they had chosen.
+T3 Code never writes policy values into the user's own settings. If you remove the policy, users
+get back the settings they had chosen.
 
 ## Limits
 
@@ -88,8 +88,8 @@ back the settings they had chosen.
 `maxRuntimeMode` is the broadest [permission mode](./permission-modes.md) any thread may use:
 `approval-required` (Supervised), `auto-accept-edits`, `auto`, or `full-access`. It applies to
 threads users start, agents start, and scheduled tasks. A thread already above it cannot run
-another turn until someone lowers its mode. A user's default above the limit starts new threads
-at the limit instead.
+another turn until someone lowers its mode; its queued messages wait and send once it is lowered. A
+user's default above the limit starts new threads at the limit instead.
 
 With `maxRuntimeMode` set, each provider's launch settings belong to you: binary path, launch
 arguments, config home, and every environment variable come from `providers.instances` or
@@ -127,16 +127,16 @@ machine, so it turns off too. To keep remote access but turn off only T3 Connect
 
 `providers.allowedDrivers` lists the providers that may run: `codex`, `claudeAgent`, `cursor`,
 `grok`, `opencode`, `antigravity`, `pi`, `muse`, and `acpRegistry`. Threads on other providers
-stay, marked unavailable.
+stay, marked unavailable, and users can still turn those providers off.
 
 `providers.instances` sets fields on every instance of a provider, such as an environment
 variable that routes Claude through Amazon Bedrock or a base URL for a company gateway.
 `binaryPath` and `launchArgs` apply to providers that have those settings. With `"locked": true`
 users cannot change the fields you set; with `"locked": false` they fill only fields the user left
 empty. A Codex pin that is locked, or set under `maxRuntimeMode`, also rules out
-[Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), whose runtime would skip it. The
-policy is readable by every user on the machine, so do not put credentials in
-it.
+[Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), whose runtime would skip it.
+
+The policy is readable by every user on the machine, so do not put credentials in it.
 
 ### Updates
 
@@ -152,8 +152,9 @@ it.
 Run `t3 policy check <file>` to validate a draft before you deploy it. Run `t3 policy show` on a
 machine to see the policy that applies there.
 
-T3 Code refuses to start with a policy it cannot fully apply: a file that is not valid JSON, a
+T3 Code refuses to start with a policy it cannot fully apply: a policy it cannot read or parse, a
 setting it does not know, a value of the wrong type, or a key that this version does not support.
+`t3 policy check` reads a JSON file; for a profile or registry value, check the same JSON first.
 A policy written for a newer version can carry keys an older one cannot enforce, so upgrade
 T3 Code before you deploy the policy that uses them.
 

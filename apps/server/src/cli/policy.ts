@@ -9,7 +9,7 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 const describePolicy = (policy: ManagedPolicy.ManagedPolicy["Service"]) => {
   const { document } = policy;
   if (document === undefined) {
-    return `No managed policy at ${policy.path}. Every setting belongs to the user.\n`;
+    return "No managed policy on this machine. Every setting belongs to the user.\n";
   }
   const settings = Object.entries(document.settings ?? {});
   const lines = [
