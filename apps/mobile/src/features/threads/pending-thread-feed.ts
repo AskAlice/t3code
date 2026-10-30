@@ -87,7 +87,29 @@ export function appendPendingThreadMessages(
   const deliveredIds = new Set(
     feed.flatMap((entry) => (entry.type === "message" ? [entry.message.id] : [])),
   );
-  const outboxIds = new Set(queuedMessages.map((message) => message.messageId));
+  const pendingEntries = queuedMessages
+    .filter((message) => !deliveredIds.has(message.messageId))
+    .map((pendingMessage): PendingThreadFeedEntry => ({
+      type: "message",
+      id: pendingMessage.messageId,
+      createdAt: pendingMessage.createdAt,
+      pendingMessage,
+      message: {
+        id: pendingMessage.messageId,
+        role: "user",
+        text: pendingMessage.text,
+        attachments: [],
+        context: pendingMessage.context,
+        createdAt: pendingMessage.createdAt,
+        updatedAt: pendingMessage.createdAt,
+        runId: null,
+        streaming: false,
+        visibility: "local",
+        sourceThreadId: pendingMessage.threadId,
+      },
+    }));
+  const pendingById = new Map(pendingEntries.map((entry) => [entry.id, entry]));
+  const serverIds = new Set<string>(queuedRuns.map(({ messageId }) => messageId));
   return [
     ...presentedFeed.map((entry): PendingThreadFeedEntry => {
       const pendingMessage = queuedMessages.find(
@@ -96,8 +118,10 @@ export function appendPendingThreadMessages(
       return pendingMessage ? { ...entry, pendingMessage, acknowledged: false } : entry;
     }),
     ...queuedRuns
-      .filter(({ messageId }) => !deliveredIds.has(messageId) && !outboxIds.has(messageId))
+      .filter(({ messageId }) => !deliveredIds.has(messageId))
       .map(({ run, text, attachments, messageId, context, message }): PendingThreadFeedEntry => {
+        const pendingEntry = pendingById.get(messageId);
+        if (pendingEntry) return pendingEntry;
         const createdAt = DateTime.formatIso(run.requestedAt);
         return {
           type: "message",
@@ -120,27 +144,7 @@ export function appendPendingThreadMessages(
           },
         };
       }),
-    ...queuedMessages
-      .filter((message) => !deliveredIds.has(message.messageId))
-      .map((pendingMessage): PendingThreadFeedEntry => ({
-        type: "message",
-        id: pendingMessage.messageId,
-        createdAt: pendingMessage.createdAt,
-        pendingMessage,
-        message: {
-          id: pendingMessage.messageId,
-          role: "user",
-          text: pendingMessage.text,
-          attachments: [],
-          context: pendingMessage.context,
-          createdAt: pendingMessage.createdAt,
-          updatedAt: pendingMessage.createdAt,
-          runId: null,
-          streaming: false,
-          visibility: "local",
-          sourceThreadId: pendingMessage.threadId,
-        },
-      })),
+    ...pendingEntries.filter((entry) => !serverIds.has(entry.id)),
   ];
 }
 

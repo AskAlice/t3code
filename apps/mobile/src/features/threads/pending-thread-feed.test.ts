@@ -157,6 +157,16 @@ describe("pending timeline messages", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.pendingMessage).toEqual(local);
     expect(entries[0]?.queued).toBeUndefined();
+    const mixed = appendPendingThreadMessages(
+      [],
+      [],
+      [local, pending("unsent")],
+      [serverQueued("both"), serverQueued("later")],
+    );
+    expect(feedIds(mixed)).toEqual(["both", "later", "unsent"]);
+    expect(mixed[0]?.pendingMessage).toEqual(local);
+    expect(mixed[0]?.queued).toBeUndefined();
+    expect(mixed[1]?.queued).toBe(true);
   });
 
   it("does not repeat a queued message the feed already shows, even collapsed", () => {
