@@ -9,7 +9,11 @@ import type {
   ManagedPolicyDocument,
   ServerAuthPolicy,
 } from "@t3tools/contracts";
-import { disableTailscaleServe, readTailscaleServePortsProxyingTo } from "@t3tools/tailscale";
+import {
+  disableTailscaleServe,
+  readTailscaleServePortsProxyingTo,
+  type TailscaleStderrDiagnostic,
+} from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -72,10 +76,18 @@ const refuse = (policy: PolicyDocument, action: string, detail?: string) =>
 
 export const refuseConnect = (policy: PolicyDocument) => refuse(policy, "T3 Connect");
 
+/** Tailscale answers that leave nothing T3 Code made forwarding here right now. */
+const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new Set([
+  "not-running",
+  "not-logged-in",
+  // T3 Code makes mappings with this same CLI, so one it may not read, it could not have made.
+  "permission-denied",
+]);
+
 /**
  * Turns off Tailscale Serve that forwards to `port`, such as one `t3 pair --tailscale` left from
- * before the policy. Runs before the server binds, and fails when such a mapping stays on.
- * Without Tailscale, or with its daemon down, nothing forwards here, so nothing is closed.
+ * before the policy. Runs before the server binds, and fails when such a mapping stays on or
+ * Tailscale's answer cannot be read. Without the CLI, or with Tailscale down, nothing is closed.
  */
 export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServeTo")(function* (
   policy: PolicyDocument,
@@ -83,7 +95,14 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
 ) {
   if (allowsRemoteClients(policy)) return;
   const servePorts = yield* readTailscaleServePortsProxyingTo(port).pipe(
-    Effect.orElseSucceed((): ReadonlyArray<number> => []),
+    Effect.catchTags({
+      TailscaleCommandSpawnError: () => Effect.succeed([]),
+      TailscaleCommandExitError: (error) =>
+        NOTHING_TO_CLOSE.has(error.stderrDiagnostic) ? Effect.succeed([]) : Effect.fail(error),
+    }),
+    Effect.mapError(() =>
+      refuseRemoteClients(policy, "so the server waits until Tailscale Serve can be checked"),
+    ),
   );
   for (const servePort of servePorts) {
     yield* disableTailscaleServe({ servePort }).pipe(

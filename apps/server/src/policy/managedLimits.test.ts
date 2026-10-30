@@ -91,45 +91,73 @@ it.effect("tells clients Connect is off when the policy leaves out remote client
 it.effect(
   "turns off Tailscale Serve that forwards here, and refuses to start if it stays on",
   () => {
-    const serveStatus = JSON.stringify({
+    const forwardsHere = JSON.stringify({
       Web: { "box.tailnet.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } } },
     });
-    // `tailscale serve status` reports the mapping; turning it off exits with `offExitCode`.
-    const tailscale = (offExitCode: number, offCalls: Array<ReadonlyArray<string>>) =>
-      ChildProcessSpawner.make((command) => {
-        const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
-        const status = args.includes("status");
-        if (!status) offCalls.push(args);
-        return Effect.succeed(
-          ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(status ? 0 : offExitCode)),
-            isRunning: Effect.succeed(false),
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.drain,
-            stdout: status ? Stream.make(new TextEncoder().encode(serveStatus)) : Stream.empty,
-            stderr: Stream.empty,
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          }),
-        );
-      });
-    const close = (offExitCode: number, offCalls: Array<ReadonlyArray<string>> = []) =>
+    interface Answers {
+      readonly status?: {
+        readonly stdout: string;
+        readonly exitCode: number;
+        readonly stderr?: string;
+      };
+      readonly offExitCode?: number;
+    }
+    // `tailscale serve status` answers with `status`; turning a port off exits with `offExitCode`.
+    const close = (answers: Answers, offCalls: Array<ReadonlyArray<string>> = []) =>
       ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
-          tailscale(offExitCode, offCalls),
+          ChildProcessSpawner.make((command) => {
+            const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+            const isStatus = args.includes("status");
+            if (!isStatus) offCalls.push(args);
+            const status = answers.status ?? { stdout: forwardsHere, exitCode: 0 };
+            const text = (value: string | undefined) =>
+              value === undefined ? Stream.empty : Stream.make(new TextEncoder().encode(value));
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Effect.succeed(
+                  ChildProcessSpawner.ExitCode(
+                    isStatus ? status.exitCode : (answers.offExitCode ?? 0),
+                  ),
+                ),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: isStatus ? text(status.stdout) : Stream.empty,
+                stderr: isStatus ? text(status.stderr) : Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            );
+          }),
         ),
       );
     return Effect.gen(function* () {
       const offCalls: Array<ReadonlyArray<string>> = [];
-      yield* close(0, offCalls);
+      yield* close({}, offCalls);
       assert.deepEqual(offCalls, [["serve", "--https=443", "off"]]);
-      const refused = yield* close(1).pipe(Effect.flip);
-      assert.include(refused.message, "Tailscale Serve on port 443");
-      // Without Tailscale there is nothing to turn off.
+      const stuck = yield* close({ offExitCode: 1 }).pipe(Effect.flip);
+      assert.include(stuck.message, "Tailscale Serve on port 443");
+      // An answer that cannot be read might hide a mapping, so the server waits.
+      for (const status of [
+        { stdout: "", exitCode: 1, stderr: "something unexpected" },
+        { stdout: "not json", exitCode: 0 },
+      ]) {
+        const unread = yield* close({ status }).pipe(Effect.flip);
+        assert.include(unread.message, "waits until Tailscale Serve can be checked");
+      }
+      // Tailscale down, or not installed, forwards nothing now.
+      yield* close({
+        status: {
+          stdout: "",
+          exitCode: 1,
+          stderr: "failed to connect to local tailscaled; it doesn't appear to be running",
+        },
+      });
       yield* ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,

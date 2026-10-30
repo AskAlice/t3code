@@ -115,7 +115,7 @@ describe("tailscale", () => {
       [443],
     );
     assert.deepEqual(parseTailscaleServePortsProxyingTo("{}", 3773), []);
-    assert.deepEqual(parseTailscaleServePortsProxyingTo("not json", 3773), []);
+    assert.isUndefined(parseTailscaleServePortsProxyingTo("not json", 3773));
   });
 
   it.effect("parses status facts", () =>

@@ -42,6 +42,7 @@ const TailscaleCommandContext = {
 export const TailscaleStderrDiagnostic = Schema.Literals([
   "no-existing-handler",
   "not-logged-in",
+  "not-running",
   "permission-denied",
   "unknown",
 ]);
@@ -52,6 +53,10 @@ const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
 > = [
   [/handler does not exist/i, "no-existing-handler"],
   [/not logged in|logged out|needs? login/i, "not-logged-in"],
+  [
+    /doesn't appear to be running|failed to connect to local tailscale|tailscale is stopped/i,
+    "not-running",
+  ],
   [/permission denied|access denied|must be root|operation not permitted/i, "permission-denied"],
 ];
 
@@ -467,13 +472,17 @@ const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
 );
 const LOOPBACK_SERVE_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-/** The HTTPS ports whose Serve handlers proxy to `localPort` on this machine's loopback. */
+/**
+ * The HTTPS ports whose Serve handlers proxy to `localPort` on this machine's loopback, or
+ * undefined when the status cannot be read.
+ */
 export const parseTailscaleServePortsProxyingTo = (
   rawServeStatusJson: string,
   localPort: number,
-): ReadonlyArray<number> => {
-  const web = Option.getOrUndefined(decodeTailscaleServeStatusJson(rawServeStatusJson))?.Web ?? {};
-  return Object.entries(web).flatMap(([hostPort, site]) => {
+): ReadonlyArray<number> | undefined => {
+  const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
+  if (Option.isNone(status)) return undefined;
+  return Object.entries(status.value.Web ?? {}).flatMap(([hostPort, site]) => {
     const servePort = Number(hostPort.slice(hostPort.lastIndexOf(":") + 1));
     const proxiesHere = Object.values(site.Handlers ?? {}).some((handler) => {
       if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return false;
@@ -488,7 +497,12 @@ export const parseTailscaleServePortsProxyingTo = (
 /** The HTTPS Serve ports that forward to `localPort` on this machine. */
 export const readTailscaleServePortsProxyingTo = (localPort: number) =>
   readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
-    Effect.map((status) => parseTailscaleServePortsProxyingTo(status, localPort)),
+    Effect.flatMap((status) => {
+      const ports = parseTailscaleServePortsProxyingTo(status, localPort);
+      return ports === undefined
+        ? Effect.fail(new TailscaleStatusParseError({ cause: "unreadable serve status" }))
+        : Effect.succeed(ports);
+    }),
   );
 
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
