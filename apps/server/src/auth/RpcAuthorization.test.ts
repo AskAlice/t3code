@@ -1,13 +1,16 @@
 import {
+  AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProviderInstanceId,
   SecretProviderId,
   ThreadId,
+  TurnItemId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -295,6 +298,44 @@ describe("thread context authorization", () => {
       }).pipe(Effect.scoped),
   );
 });
+
+it.effect("lets a thread operator decline an environment link request but not answer it", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.peerLinksAnswerRequest
+        > => tag !== WS_METHODS.peerLinksAnswerRequest,
+      ),
+    );
+    const handled: string[] = [];
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.peerLinksAnswerRequest, ({ answer }) =>
+            Effect.sync(() => {
+              handled.push(answer.type);
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    const request = { threadId: ThreadId.make("thread"), turnItemId: TurnItemId.make("item") };
+    expect(
+      yield* client[WS_METHODS.peerLinksAnswerRequest]({
+        ...request,
+        answer: { type: "use-existing", environmentId: EnvironmentId.make("buildbox") },
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
+    expect(handled).toEqual([]);
+    yield* client[WS_METHODS.peerLinksAnswerRequest]({ ...request, answer: { type: "decline" } });
+    expect(handled).toEqual(["decline"]);
+  }).pipe(Effect.scoped),
+);
 
 it.effect("separates host file URLs from readable attachment URLs", () =>
   Effect.gen(function* () {
