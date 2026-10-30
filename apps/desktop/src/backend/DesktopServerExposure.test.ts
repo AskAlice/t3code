@@ -7,9 +7,11 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -189,6 +191,37 @@ describe("DesktopServerExposure", () => {
         assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:4173/");
       }),
     ),
+  );
+
+  it.effect("starts local-only, Serve off, when a managed policy keeps clients local", () =>
+    withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
+        yield* settings.setTailscaleServe({ enabled: true, port: Option.none() });
+
+        const state = yield* serverExposure.configureFromSettings({ port: 4173 });
+        assert.equal(state.mode, "local-only");
+        const backendConfig = yield* serverExposure.backendConfig;
+        assert.equal(backendConfig.bindHost, "127.0.0.1");
+        assert.isFalse(backendConfig.tailscaleServeEnabled);
+        // The saved choice returns once the policy allows it.
+        const saved = yield* settings.get;
+        assert.equal(saved.serverExposureMode, "network-accessible");
+        assert.isTrue(saved.tailscaleServeEnabled);
+      }),
+      {},
+      // reg.exe answers with a Windows policy that leaves out remote clients.
+      layerMockSpawner(
+        `\r\nHKLM\\SOFTWARE\\Policies\\T3Tools\\T3Code\r\n    Policy    REG_SZ    ${JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { clients: ["desktop"] },
+        })}\r\n`,
+      ),
+    ).pipe(Effect.provideService(HostProcess.Platform, "win32")),
   );
 
   it.effect("persists network-accessible mode and updates backend binding state", () =>

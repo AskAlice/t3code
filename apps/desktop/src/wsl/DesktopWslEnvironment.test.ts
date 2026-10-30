@@ -1,10 +1,20 @@
 // @effect-diagnostics nodeBuiltinImport:off - the executed suite runs the generated install script through a real POSIX shell.
-import { describe, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 import { afterAll, expect } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
 
+import { managedPolicyPath } from "@t3tools/shared/managedPolicyFile";
+
 import {
   buildWslRuntimeInstallScript,
+  makeIsAvailable,
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   buildWslRuntimeProbeScript,
@@ -424,4 +434,57 @@ describe("parseResolvedPath", () => {
       "/usr/local/bin:/usr/bin",
     );
   });
+});
+
+// Path.layer joins with POSIX separators here, so the test windir is a POSIX path.
+const WSL_EXE = "/windows/System32/wsl.exe";
+
+// reg.exe finds the Policies root and no T3 Code value, so only the policy file decides.
+const registryWithoutPolicy = ChildProcessSpawner.make((command) => {
+  const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+  return Effect.succeed(
+    ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(1),
+      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(args.includes("/v") ? 1 : 0)),
+      isRunning: Effect.succeed(false),
+      kill: () => Effect.void,
+      unref: Effect.succeed(Effect.void),
+      stdin: Sink.drain,
+      stdout: Stream.empty,
+      stderr: Stream.empty,
+      all: Stream.empty,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+    }),
+  );
+});
+
+const isAvailable = (files: Readonly<Record<string, string>>) =>
+  makeIsAvailable("win32", "/windows").pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({
+          exists: (path) => Effect.succeed(path in files),
+          readFileString: (path) => Effect.succeed(files[path] ?? ""),
+        }),
+        Path.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, registryWithoutPolicy),
+      ),
+    ),
+  );
+
+describe("makeIsAvailable", () => {
+  it.effect("turns WSL off on a machine with a managed policy, even an invalid one", () =>
+    Effect.gen(function* () {
+      const policyFile = managedPolicyPath("win32");
+      assert.isTrue(yield* isAvailable({ [WSL_EXE]: "" }));
+      assert.isFalse(
+        yield* isAvailable({
+          [WSL_EXE]: "",
+          [policyFile]: JSON.stringify({ schemaVersion: 1, organization: "Example Corp" }),
+        }),
+      );
+      assert.isFalse(yield* isAvailable({ [WSL_EXE]: "", [policyFile]: "{ not json" }));
+    }),
+  );
 });
