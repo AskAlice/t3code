@@ -142,19 +142,17 @@ function PendingLinkRequest(props: {
             : "Only a session that manages access here can answer this."}
         </p>
       )}
-      {canDecline || canLink ? (
+      {canDecline ? (
         <div className="flex min-w-0 items-center justify-end gap-2">
-          {canDecline ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost-muted"
-              disabled={declining}
-              onClick={() => void decline()}
-            >
-              Decline
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            disabled={declining}
+            onClick={() => void decline()}
+          >
+            Decline
+          </Button>
           {canLink ? (
             <Button type="button" size="xs" disabled={declining} onClick={() => setOpen(true)}>
               {picksMachine(item) ? "Choose machine…" : "Review link…"}
