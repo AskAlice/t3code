@@ -34,12 +34,17 @@ export function managedPolicyPath(platform: NodeJS.Platform): string {
 
 // Unknown keys may be restrictions from a newer release; refusing them keeps a file this
 // build cannot fully enforce from looking enforced.
-const decodeDocumentExit = Schema.decodeUnknownExit(Schema.fromJsonString(ManagedPolicyDocument), {
+const decodeDocumentJsonExit = Schema.decodeUnknownExit(
+  Schema.fromJsonString(ManagedPolicyDocument),
+  { onExcessProperty: "error" },
+);
+const decodeDocumentExit = Schema.decodeUnknownExit(ManagedPolicyDocument, {
   onExcessProperty: "error",
 });
 
-const decodeDocument = (path: string, raw: string) => {
-  const decoded = decodeDocumentExit(raw);
+/** Decode a policy from JSON text, or from a value a profile already parsed. */
+const decodeDocument = (path: string, raw: unknown) => {
+  const decoded = typeof raw === "string" ? decodeDocumentJsonExit(raw) : decodeDocumentExit(raw);
   return Exit.isFailure(decoded)
     ? Effect.fail(
         new ManagedPolicyFileError({
@@ -101,6 +106,24 @@ function parseRegistryPolicy(output: string): string | undefined {
   return match?.[1];
 }
 
+const decodeJsonExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+const decodeForcedExit = Schema.decodeUnknownExit(
+  Schema.Struct({
+    Forced: Schema.Tuple([Schema.Struct({ mcx_preference_settings: Schema.Unknown })]),
+  }),
+);
+
+/**
+ * Installed managed preferences hold the profile's keys directly, but MCX-style profiles keep
+ * them under `Forced[0].mcx_preference_settings`; read either rather than refuse a valid profile.
+ */
+function unwrapForced(json: string): unknown {
+  const parsed = decodeJsonExit(json);
+  if (Exit.isFailure(parsed)) return json;
+  const forced = decodeForcedExit(parsed.value);
+  return Exit.isSuccess(forced) ? forced.value.Forced[0].mcx_preference_settings : parsed.value;
+}
+
 /** Read the policy a configuration profile or Group Policy set; absent means no such policy. */
 const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platform) {
   if (platform === "darwin") {
@@ -123,7 +146,7 @@ const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platfor
     if (converted.exitCode !== 0) {
       return yield* new ManagedPolicyFileError({ path, reason: "the profile cannot be read" });
     }
-    return { source: path, document: yield* decodeDocument(path, converted.stdout) };
+    return { source: path, document: yield* decodeDocument(path, unwrapForced(converted.stdout)) };
   }
   if (platform === "win32") {
     const path = WINDOWS_POLICY_KEY;

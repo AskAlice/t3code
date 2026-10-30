@@ -76,6 +76,11 @@ describe("readManagedPolicy", () => {
       const file = { [managedPolicyPath("darwin")]: policy };
 
       assert.equal(yield* read("darwin", profile, plutil), MACOS_MANAGED_PREFERENCES_PATH);
+      const forced = JSON.stringify({ Forced: [{ mcx_preference_settings: JSON.parse(policy) }] });
+      assert.equal(
+        yield* read("darwin", profile, { "/usr/bin/plutil": { stdout: forced, exitCode: 0 } }),
+        MACOS_MANAGED_PREFERENCES_PATH,
+      );
       assert.equal(yield* read("darwin", file), managedPolicyPath("darwin"));
       assert.isUndefined(yield* read("darwin", {}));
       assert.include(
