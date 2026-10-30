@@ -1386,30 +1386,29 @@ const matches = (expected: unknown, actual: unknown): boolean => {
 
 /** Each new top-level thread request in a run; a failed call created nothing. */
 const newThreadRequests = (calls: ReadonlyArray<Call>) =>
-  calls.flatMap((call): ReadonlyArray<unknown> => {
-    if (call.failed === true) return [];
-    if (call.tool === "t3_thread_launch") return [call.input];
-    if (call.tool !== "create_threads" || !isRecord(call.input)) return [];
-    return Array.isArray(call.input.threads) ? call.input.threads : [];
+  calls.flatMap((call): ReadonlyArray<{ request: unknown; brief: unknown }> => {
+    if (call.failed === true || !isRecord(call.input)) return [];
+    if (call.tool === "t3_thread_launch")
+      return [{ request: call.input, brief: call.input.message }];
+    if (call.tool !== "create_threads" || !Array.isArray(call.input.threads)) return [];
+    return call.input.threads.map((request: unknown) => ({
+      request,
+      brief: isRecord(request) ? request.prompt : undefined,
+    }));
   });
 
 /** Whether every expected value can take a different request it matches. */
 const matchesDistinct = (
   expected: ReadonlyArray<unknown>,
-  requests: ReadonlyArray<unknown>,
+  requests: ReturnType<typeof newThreadRequests>,
   taken: ReadonlySet<number> = new Set(),
 ): boolean => {
   const [first, ...rest] = expected;
   if (expected.length === 0) return true;
   return requests.some(
-    (request, i) =>
+    ({ request, brief }, i) =>
       !taken.has(i) &&
-      matches(
-        first,
-        typeof first === "string" && isRecord(request)
-          ? (request.message ?? request.prompt)
-          : request,
-      ) &&
+      matches(first, typeof first === "string" ? brief : request) &&
       matchesDistinct(rest, requests, new Set([...taken, i])),
   );
 };

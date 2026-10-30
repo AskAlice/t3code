@@ -101,6 +101,12 @@ it("counts the new threads an agent asks for, one brief per thread, over both cr
   assert.deepEqual(failed(expect, run(batch("Fix reconnect, csv and admin"))), [label]);
   assert.deepEqual(failed(expect, run(batch("reconnect, csv, admin", "csv", "csv"))), [label]);
   assert.deepEqual(failed(expect, run(batch("reconnect", "csv", "admin", "docs"))), [label]);
+  for (const call of [
+    { tool: "t3_thread_launch", input: { prompt: "csv" } },
+    { tool: "create_threads", input: { threads: [{ message: "csv" }] } },
+  ]) {
+    assert.deepEqual(failed(expect, run(launch("reconnect"), launch("admin"), call)), [label]);
+  }
   assert.deepEqual(
     failed(
       expect,
