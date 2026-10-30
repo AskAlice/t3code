@@ -89,7 +89,13 @@ const MEDIA_EDGE_CLASS_NAME =
 const BUBBLE_CHIP_CLASS_NAME =
   "[&_[data-slot=context-chip]]:[--context-chip-ink:var(--context-chip-message,var(--context-chip-accent))]";
 
-function UserFileCard({ file }: { readonly file: ChatFileAttachment }) {
+function UserFileCard({
+  file,
+  copyMarkdown,
+}: {
+  readonly file: ChatFileAttachment;
+  readonly copyMarkdown: string | undefined;
+}) {
   const ctx = use(TimelineRowCtx);
   const extension = /\.([a-z0-9]{1,8})$/i.exec(file.name)?.[1]?.toUpperCase() ?? "File";
   const identity = (
@@ -108,7 +114,10 @@ function UserFileCard({ file }: { readonly file: ChatFileAttachment }) {
     </>
   );
   return (
-    <div className="flex w-64 max-w-full items-center gap-1 rounded-2xl bg-message py-2 ps-2 pe-1 text-message-foreground">
+    <div
+      data-markdown-copy={copyMarkdown}
+      className="flex w-64 max-w-full items-center gap-1 rounded-2xl bg-message py-2 ps-2 pe-1 text-message-foreground"
+    >
       {file.downloadable === false ? (
         <div className="flex min-w-0 flex-1 items-center gap-3">{identity}</div>
       ) : (
@@ -412,11 +421,22 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
-  const chippedAttachmentIds = new Set(
-    collectComposerContextReferences(resolvedContext.text).flatMap((occurrence) => {
+  const attachmentReferences = collectComposerContextReferences(resolvedContext.text).flatMap(
+    (occurrence) => {
       const record = asKnownContextRecord(resolvedContext.recordsById.get(occurrence.contextId));
-      return record?.kind === "file" || record?.kind === "image" ? [record.attachmentId] : [];
-    }),
+      return record?.kind === "file" || record?.kind === "image"
+        ? [
+            {
+              attachmentId: record.attachmentId,
+              contextId: occurrence.contextId,
+              source: occurrence.source,
+            },
+          ]
+        : [];
+    },
+  );
+  const chippedAttachmentIds = new Set(
+    attachmentReferences.map((reference) => reference.attachmentId),
   );
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
@@ -455,7 +475,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     otherUserFiles.length > 0 &&
     regularImages.length + userVideos.length + userAudio.length + unknownAttachments.length === 0 &&
     replaceComposerContextReferences(resolvedContext.text, (reference) =>
-      reference.kind === "file" ? "" : reference.label,
+      attachmentReferences.some(
+        (attached) =>
+          attached.contextId === reference.contextId &&
+          otherUserFiles.some((file) => file.id === attached.attachmentId),
+      )
+        ? ""
+        : reference.label,
     ).trim() === "";
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
@@ -813,9 +839,16 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 </div>
               ) : null}
               {fileCardsOnly ? (
-                <div className="flex flex-col items-end gap-1">
+                <div className="flex flex-col items-end gap-1" onCopyCapture={onBodyCopyCapture}>
                   {otherUserFiles.map((file) => (
-                    <UserFileCard key={file.id} file={file} />
+                    <UserFileCard
+                      key={file.id}
+                      file={file}
+                      copyMarkdown={
+                        attachmentReferences.find((reference) => reference.attachmentId === file.id)
+                          ?.source
+                      }
+                    />
                   ))}
                 </div>
               ) : null}
