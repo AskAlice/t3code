@@ -1,6 +1,9 @@
 import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as ManagedLimits from "./managedLimits.ts";
 import * as ManagedPolicy from "./ManagedPolicy.ts";
@@ -83,4 +86,56 @@ it.effect("tells clients Connect is off when the policy leaves out remote client
     assert.isTrue(ManagedLimits.allowsConnect(policy({ clients: ["remote"] })));
     assert.isFalse(ManagedLimits.allowsConnect(policy({ connect: false })));
   }),
+);
+
+it.effect(
+  "turns off Tailscale Serve that forwards here, and refuses to start if it stays on",
+  () => {
+    const serveStatus = JSON.stringify({
+      Web: { "box.tailnet.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } } },
+    });
+    // `tailscale serve status` reports the mapping; turning it off exits with `offExitCode`.
+    const tailscale = (offExitCode: number, offCalls: Array<ReadonlyArray<string>>) =>
+      ChildProcessSpawner.make((command) => {
+        const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+        const status = args.includes("status");
+        if (!status) offCalls.push(args);
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(status ? 0 : offExitCode)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: status ? Stream.make(new TextEncoder().encode(serveStatus)) : Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      });
+    const close = (offExitCode: number, offCalls: Array<ReadonlyArray<string>> = []) =>
+      ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          tailscale(offExitCode, offCalls),
+        ),
+      );
+    return Effect.gen(function* () {
+      const offCalls: Array<ReadonlyArray<string>> = [];
+      yield* close(0, offCalls);
+      assert.deepEqual(offCalls, [["serve", "--https=443", "off"]]);
+      const refused = yield* close(1).pipe(Effect.flip);
+      assert.include(refused.message, "Tailscale Serve on port 443");
+      // Without Tailscale there is nothing to turn off.
+      yield* ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.die("tailscale is not installed")),
+        ),
+      );
+    });
+  },
 );

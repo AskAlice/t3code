@@ -478,23 +478,17 @@ export const parseTailscaleServePortsProxyingTo = (
     const proxiesHere = Object.values(site.Handlers ?? {}).some((handler) => {
       if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return false;
       const target = new URL(handler.Proxy);
-      return LOOPBACK_SERVE_HOSTS.has(target.hostname) && Number(target.port) === localPort;
+      return LOOPBACK_SERVE_HOSTS.has(target.hostname) && target.port === String(localPort);
     });
     return proxiesHere && Number.isInteger(servePort) ? [servePort] : [];
   });
 };
 
-/** Turns off every Serve port that forwards to `localPort`, such as one left by `t3 pair`. */
-export const disableTailscaleServeProxyingTo = Effect.fn(
-  "tailscale.disableTailscaleServeProxyingTo",
-)(function* (localPort: number) {
-  const status = yield* readTailscaleOutput("serve", ["serve", "status", "--json"]);
-  const servePorts = parseTailscaleServePortsProxyingTo(status, localPort);
-  yield* Effect.forEach(servePorts, (servePort) => disableTailscaleServe({ servePort }), {
-    discard: true,
-  });
-  return servePorts;
-});
+/** The HTTPS Serve ports that forward to `localPort` on this machine. */
+export const readTailscaleServePortsProxyingTo = (localPort: number) =>
+  readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
+    Effect.map((status) => parseTailscaleServePortsProxyingTo(status, localPort)),
+  );
 
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
   function* (input: { readonly baseUrl: string; readonly timeout?: Duration.Input }) {

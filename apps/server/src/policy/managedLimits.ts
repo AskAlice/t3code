@@ -9,6 +9,7 @@ import type {
   ManagedPolicyDocument,
   ServerAuthPolicy,
 } from "@t3tools/contracts";
+import { disableTailscaleServe, readTailscaleServePortsProxyingTo } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -70,6 +71,34 @@ const refuse = (policy: PolicyDocument, action: string, detail?: string) =>
   });
 
 export const refuseConnect = (policy: PolicyDocument) => refuse(policy, "T3 Connect");
+
+/**
+ * Turns off Tailscale Serve that forwards to `port`, such as one `t3 pair --tailscale` left from
+ * before the policy. Runs before the server binds, and fails when such a mapping stays on.
+ * Without Tailscale, or with its daemon down, nothing forwards here, so nothing is closed.
+ */
+export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServeTo")(function* (
+  policy: PolicyDocument,
+  port: number,
+) {
+  if (allowsRemoteClients(policy)) return;
+  const servePorts = yield* readTailscaleServePortsProxyingTo(port).pipe(
+    Effect.orElseSucceed((): ReadonlyArray<number> => []),
+  );
+  for (const servePort of servePorts) {
+    yield* disableTailscaleServe({ servePort }).pipe(
+      Effect.mapError(() =>
+        refuseRemoteClients(
+          policy,
+          `so Tailscale Serve on port ${servePort}, which forwards here, must be turned off first`,
+        ),
+      ),
+    );
+    yield* Effect.logInfo("Turned off Tailscale Serve the managed policy does not allow", {
+      servePort,
+    });
+  }
+});
 
 export const refuseRemoteClients = (policy: PolicyDocument, detail?: string) =>
   refuse(policy, AUTH_POLICY_ACTION["remote-reachable"], detail);
