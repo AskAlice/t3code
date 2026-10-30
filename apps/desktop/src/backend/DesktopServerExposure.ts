@@ -9,8 +9,6 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import { readManagedPolicy } from "@t3tools/shared/managedPolicyFile";
 import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -24,6 +22,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
@@ -460,13 +459,17 @@ export const make = Effect.gen(function* () {
 
   const readNetworkInterfaces = networkInterfaces.read;
 
-  // The server refuses to bind wider than the policy's clients allow, so a choice saved before the
-  // policy would stop the backend from starting; it waits until the policy allows it again.
-  const remoteAllowed = yield* readManagedPolicy(yield* HostProcess.Platform).pipe(
+  // The server refuses to bind wider than the policy's clients allow, so network access or Serve
+  // saved before the policy would keep the backend from starting. The backend runs without them;
+  // the saved choice stays for when the policy allows it.
+  const remoteAllowed = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
     Effect.map((found) => found?.document.limits?.clients?.includes("remote") ?? true),
     Effect.orElseSucceed(() => false),
-    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
   );
+  const withinPolicy = (settings: DesktopAppSettings.DesktopSettings) =>
+    remoteAllowed
+      ? settings
+      : { ...settings, serverExposureMode: "local-only" as const, tailscaleServeEnabled: false };
 
   const getState = Ref.get(stateRef).pipe(Effect.map(toContractState));
   const backendConfig = Ref.get(stateRef).pipe(Effect.map(toBackendConfig));
@@ -474,12 +477,11 @@ export const make = Effect.gen(function* () {
   const configureFromSettings = Effect.fn("desktop.serverExposure.configureFromSettings")(
     function* ({ port }: { readonly port: number }) {
       yield* Effect.annotateCurrentSpan({ port });
-      const saved = yield* desktopSettings.get;
-      const settings = remoteAllowed ? saved : { ...saved, tailscaleServeEnabled: false };
+      const settings = yield* desktopSettings.get;
       const currentNetworkInterfaces = yield* readNetworkInterfaces;
       const resolved = resolveRuntimeState({
-        requestedMode: remoteAllowed ? settings.serverExposureMode : "local-only",
-        settings,
+        requestedMode: withinPolicy(settings).serverExposureMode,
+        settings: withinPolicy(settings),
         port,
         networkInterfaces: currentNetworkInterfaces,
         advertisedHostOverride: config.desktopLanHostOverride,
@@ -501,8 +503,8 @@ export const make = Effect.gen(function* () {
     };
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
     const resolved = resolveRuntimeState({
-      requestedMode: mode,
-      settings: nextSettings,
+      requestedMode: withinPolicy(nextSettings).serverExposureMode,
+      settings: withinPolicy(nextSettings),
       port: previous.port,
       networkInterfaces: currentNetworkInterfaces,
       advertisedHostOverride: config.desktopLanHostOverride,
@@ -553,7 +555,7 @@ export const make = Effect.gen(function* () {
 
       const nextState = yield* Ref.updateAndGet(stateRef, (current) => ({
         ...current,
-        tailscaleServeEnabled: result.settings.tailscaleServeEnabled,
+        tailscaleServeEnabled: withinPolicy(result.settings).tailscaleServeEnabled,
         tailscaleServePort: result.settings.tailscaleServePort,
       }));
 
