@@ -115,7 +115,8 @@ export function QueuedRunsControl({
   const activeRun = workflow?.activeRun ?? null;
   const canSend = workflow?.canSendNow === true || workflow?.canPromoteToSteer === true;
   const nextSteerable = queued.find(
-    ({ steerRejectionReason }) => workflow?.canSendNow || steerRejectionReason === null,
+    ({ steerRejectionReason }) =>
+      workflow?.canSendNow || workflow?.promoteSkipsCompaction || steerRejectionReason === null,
   );
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
@@ -283,7 +284,9 @@ export function QueuedRunsControl({
                           disabled={
                             item.runId === null ||
                             busyRunId !== null ||
-                            (!workflow?.canSendNow && item.steerRejectionReason !== null)
+                            (!workflow?.canSendNow &&
+                              !workflow?.promoteSkipsCompaction &&
+                              item.steerRejectionReason !== null)
                           }
                           onClick={() => {
                             if (item.runId !== null) {
