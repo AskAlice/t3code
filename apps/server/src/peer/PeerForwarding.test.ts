@@ -14,9 +14,11 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
@@ -698,7 +700,7 @@ it.effect("refuses a launch there above the link's access, naming the link", () 
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
 
       // A full-access agent here asks for more than the link allows there.
-      const refused = yield* a.call("thread:laptop-full", "t3_thread_launch", {
+      const launchAboveLink = a.call("thread:laptop-full", "t3_thread_launch", {
         environmentId: box.environmentId,
         projectId: boxProject,
         title: "Run the suite there",
@@ -706,12 +708,16 @@ it.effect("refuses a launch there above the link's access, naming the link", () 
         message: "Run the suite.",
         runtimeMode: "full-access",
       });
-      const { message } = failureOf(refused);
+      const { message } = failureOf(yield* launchAboveLink);
       expect(message).toContain('"Box"');
       expect(message).toContain("auto");
       expect(message).toContain("full-access");
       expect(message).not.toContain("parent mode");
       expect((yield* Ref.get(seen)).launches).toEqual([]);
+
+      // Once the link has expired, that is what the agent needs to hear.
+      yield* TestClock.adjust(Duration.days(31));
+      expect(failureOf(yield* launchAboveLink).message).toContain("expired");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

@@ -134,7 +134,8 @@ const make = Effect.gen(function* () {
   /**
    * The linked environment refuses a mode above the link's access too, but as
    * "broader than parent mode", which misleads when the parent here is broader.
-   * A read-only link refuses the launch there with its own capability error.
+   * A read-only link refuses the launch there with its own capability error,
+   * and an expired one is left to say it expired.
    */
   const assertWithinLinkAccess = Effect.fn("PeerForwarding.assertWithinLinkAccess")(function* (
     environmentId: EnvironmentId,
@@ -143,6 +144,7 @@ const make = Effect.gen(function* () {
     if (!isRuntimeMode(requested)) return;
     const link = yield* links.get(environmentId).pipe(Effect.mapError(linkStorageFailure));
     if (Option.isNone(link)) return;
+    if (DateTime.isLessThanOrEqualTo(link.value.expiresAt, yield* DateTime.now)) return;
     const { label, access } = link.value;
     if (access === "read-only" || runtimeModeRank(requested) <= runtimeModeRank(access)) return;
     return yield* new OrchestratorMcpFailure({
