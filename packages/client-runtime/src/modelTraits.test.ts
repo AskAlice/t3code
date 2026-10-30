@@ -24,4 +24,29 @@ describe("buildTraitsTriggerDisplay", () => {
 
     expect(display.label).toBe("Default");
   });
+
+  it("merges speed into the Default reasoning label and leaves other unset selects out", () => {
+    const display = buildTraitsTriggerDisplay({
+      provider: ProviderDriverKind.make("claudeAgent"),
+      descriptors: [
+        {
+          id: "effort",
+          label: "Effort",
+          type: "select",
+          options: [{ id: "high", label: "High" }],
+        },
+        {
+          id: "contextWindow",
+          label: "Context",
+          type: "select",
+          options: [{ id: "1m", label: "1M" }],
+        },
+        { id: "fastMode", label: "Fast", type: "boolean", currentValue: true },
+      ],
+      primarySelectDescriptorId: "effort",
+      ultrathinkPromptControlled: false,
+    });
+
+    expect(display).toEqual({ label: "Default Fast", speedLabel: "Fast", otherLabels: [] });
+  });
 });

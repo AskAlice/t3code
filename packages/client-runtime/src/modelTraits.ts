@@ -151,6 +151,10 @@ export function buildTraitsTriggerDisplay(input: {
         continue;
       }
     }
+    const isReasoningLabel =
+      reasoningLabelIndex === -1 &&
+      descriptor.type === "select" &&
+      REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id);
     const label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
         ? "Ultrathink"
@@ -160,13 +164,9 @@ export function buildTraitsTriggerDisplay(input: {
               descriptor,
               input.modelSelection,
               input.reportedModelSelection,
-            );
+            ) || (isReasoningLabel ? "Default" : undefined);
     if (typeof label === "string" && label.length > 0) {
-      if (
-        reasoningLabelIndex === -1 &&
-        descriptor.type === "select" &&
-        REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id)
-      ) {
+      if (isReasoningLabel) {
         reasoningLabelIndex = labels.length;
       }
       labels.push(label);
