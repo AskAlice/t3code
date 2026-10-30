@@ -64,8 +64,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksLink]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
-  // A link lets every agent here reach the other environment: Settings' bar. Declining
-  // links nothing, so it needs only what stopping the thread does.
+  // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
@@ -93,6 +92,7 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
+  // Declining links nothing, so it needs only what stopping the thread does.
   if (method === WS_METHODS.peerLinksAnswerRequest && isLinkRequestDecline(input))
     return [AuthOrchestrationOperateScope];
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
