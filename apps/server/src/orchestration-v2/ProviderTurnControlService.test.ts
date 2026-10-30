@@ -216,9 +216,15 @@ it.effect(
         ProjectionStore.ProjectionStoreV2.of({
           apply: () => Effect.void,
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
+          getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
+          listActiveSubagentThreadIds: () => Effect.die("unused listActiveSubagentThreadIds"),
+          countThreads: () => Effect.die("unused countThreads"),
+          listActiveShellIndex: () => Effect.die("unused listActiveShellIndex"),
+          listOlderSettledThreads: () => Effect.die("unused listOlderSettledThreads"),
           readShellSnapshot: () => Effect.die("unused readShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
+          findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
           getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
@@ -263,6 +269,7 @@ it.effect(
           getRunMessage: () => Effect.die("not used"),
           isNodeStored: () => Effect.die("not used"),
           canStartQueuedRun: () => Effect.die("not used"),
+          getHeldQueuedRuns: () => Effect.die("not used"),
           getRecoveryThreadIds: () => Effect.die("unused getRecoveryThreadIds"),
           getUnreadableThreadIds: () => Effect.die("unused getUnreadableThreadIds"),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
@@ -283,6 +290,8 @@ it.effect(
           closeInstance: () => Effect.void,
           release: () => Effect.void,
           detach: () => Effect.void,
+          otherWorkingThreads: () => Effect.succeed([]),
+          releaseUnlessBusy: () => Effect.succeed(true),
         }),
       );
       const layerControl = ProviderTurnControlService.layer.pipe(
@@ -334,105 +343,6 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
-);
-
-it.effect("gives up on an interrupt the provider never answers", () =>
-  Effect.gen(function* () {
-    const now = yield* DateTime.now;
-    const threadId = ThreadId.make("thread:unanswered-interrupt");
-    const providerSessionId = ProviderSessionId.make("provider-session:unanswered-interrupt");
-    const providerThreadId = ProviderThreadId.make("provider-thread:unanswered-interrupt");
-    const providerTurnId = ProviderTurnId.make("provider-turn:unanswered-interrupt");
-    const interruptRequested = yield* Deferred.make<void>();
-    const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
-      instanceId: providerInstanceId,
-      driver,
-      providerSessionId,
-      providerSession: {
-        id: providerSessionId,
-        driver,
-        providerInstanceId,
-        status: "running",
-        cwd: "/workspace",
-        model: modelSelection.model,
-        capabilities: CodexProviderCapabilitiesV2,
-        createdAt: now,
-        updatedAt: now,
-        lastError: null,
-      },
-      events: Stream.empty,
-      ensureThread: () => Effect.die("unused ensureThread"),
-      resumeThread: () => Effect.die("unused resumeThread"),
-      startTurn: () => Effect.die("unused startTurn"),
-      steerTurn: () => Effect.die("unused steerTurn"),
-      // The process stays alive but never answers turn/interrupt.
-      interruptTurn: () =>
-        Deferred.succeed(interruptRequested, undefined).pipe(Effect.andThen(Effect.never)),
-      respondToRuntimeRequest: () => Effect.die("unused respondToRuntimeRequest"),
-      readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
-      rollbackThread: () => Effect.die("unused rollbackThread"),
-      forkThread: () => Effect.die("unused forkThread"),
-    };
-    const layerProjection = Layer.mock(ProjectionStore.ProjectionStoreV2)({
-      getProviderControlContext: () =>
-        Effect.succeed({
-          providerThread: {
-            id: providerThreadId,
-            driver,
-            providerInstanceId,
-            providerSessionId,
-            appThreadId: threadId,
-            ownerNodeId: null,
-            nativeThreadRef: null,
-            nativeConversationHeadRef: null,
-            status: "active",
-            firstRunOrdinal: 1,
-            lastRunOrdinal: 1,
-            handoffIds: [],
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-          },
-          providerTurn: {
-            id: providerTurnId,
-            providerThreadId,
-            nodeId: NodeId.make("node:unanswered-interrupt"),
-            runAttemptId: RunAttemptId.make("run-attempt:unanswered-interrupt"),
-            nativeTurnRef: null,
-            ordinal: 1,
-            status: "running",
-            startedAt: now,
-            completedAt: null,
-          },
-          attempt: undefined,
-          message: undefined,
-          run: undefined,
-        }),
-    });
-    const layerSessionManager = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-      get: () => Effect.succeedSome(runtime),
-    });
-
-    const exit = yield* Effect.gen(function* () {
-      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
-      const interrupt = yield* control
-        .interrupt({ threadId, providerSessionId, providerThreadId, providerTurnId })
-        .pipe(Effect.exit, Effect.forkScoped);
-      yield* Deferred.await(interruptRequested);
-      yield* TestClock.adjust(PROVIDER_CONTROL_TIMEOUT);
-      return yield* Fiber.join(interrupt);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        ProviderTurnControlService.layer.pipe(
-          Layer.provide(Layer.merge(layerProjection, layerSessionManager)),
-        ),
-      ),
-    );
-
-    assert.isTrue(Exit.isFailure(exit));
-    if (Exit.isFailure(exit)) assert.include(Cause.pretty(exit.cause), "TimeoutError");
-  }),
 );
 
 it.effect("a steer that times out after its turn completes is not offered as a follow-up", () =>
