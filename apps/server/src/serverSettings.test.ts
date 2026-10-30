@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  globalIdleCompaction,
   type ManagedPolicyDocument,
   ModelSelection,
   ProjectId,
@@ -2030,26 +2031,28 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
   it.effect(
     "keeps an idle compaction choice saved before idleCompaction over a policy default",
     () =>
-      Effect.gen(function* () {
-        const service = yield* ServerSettingsModule.ServerSettingsService;
-        const config = yield* ServerConfig.ServerConfig;
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.writeFileString(
-          config.settingsPath,
-          JSON.stringify({ compactIdleThreads: false }),
-        );
+      // The file holds only the legacy switch: off differs from the policy's default, on matches it.
+      Effect.forEach([false, true], (compactIdleThreads) =>
+        Effect.gen(function* () {
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const chosen = compactIdleThreads ? "beforeCacheExpires" : "onReturn";
+          yield* fs.writeFileString(config.settingsPath, JSON.stringify({ compactIdleThreads }));
 
-        assert.equal((yield* service.getSettings).idleCompaction, "onReturn");
-        yield* service.updateSettings({ defaultAutoPull: true });
-        assert.equal((yield* service.getSettings).idleCompaction, "onReturn");
-        assert.include(yield* fs.readFileString(config.settingsPath), '"onReturn"');
-      }).pipe(
-        Effect.provide(
-          layerServerSettings({
-            schemaVersion: 1,
-            organization: "Example Corp",
-            settings: { idleCompaction: { value: "beforeCacheExpires", locked: false } },
-          }),
+          assert.equal((yield* service.getSettings).idleCompaction, chosen);
+          yield* service.updateSettings({ defaultAutoPull: true });
+          // What applies once the policy is gone is still the user's choice.
+          const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+          assert.equal(globalIdleCompaction(stored), chosen);
+        }).pipe(
+          Effect.provide(
+            layerServerSettings({
+              schemaVersion: 1,
+              organization: "Example Corp",
+              settings: { idleCompaction: { value: "beforeCacheExpires", locked: false } },
+            }),
+          ),
         ),
       ),
   );

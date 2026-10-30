@@ -468,8 +468,9 @@ const TailscaleServeStatusJson = Schema.Struct({
     ),
   ),
 });
+// A node without any Serve configuration prints `null`.
 const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
-  Schema.fromJsonString(TailscaleServeStatusJson),
+  Schema.fromJsonString(Schema.NullOr(TailscaleServeStatusJson)),
 );
 const LOOPBACK_SERVE_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
@@ -483,7 +484,7 @@ export const parseTailscaleServePortsProxyingTo = (
 ): ReadonlyArray<number> | undefined => {
   const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
   if (Option.isNone(status)) return undefined;
-  return Object.entries(status.value.Web ?? {}).flatMap(([hostPort, site]) => {
+  return Object.entries(status.value?.Web ?? {}).flatMap(([hostPort, site]) => {
     const servePort = Number(hostPort.slice(hostPort.lastIndexOf(":") + 1));
     const proxiesHere = Object.values(site.Handlers ?? {}).some((handler) => {
       if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return false;
