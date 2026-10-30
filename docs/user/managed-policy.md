@@ -59,9 +59,10 @@ Each key under `settings` names a server setting by its path in the server's `se
 - `"locked": true` sets the value and stops users and agents from changing it, including in
   per-project settings. Settings shows the control as **Managed by** your organization.
 
-Some settings are overridden by another when both are set. Lock `idleCompaction` along with the
-older `compactIdleThreads`, and lock `worktreeCleanup`, which projects can also set, along with the
-`worktree` rules in `storageCleanup`. T3 Code refuses a policy that locks only the first.
+Some settings are overridden by another. Lock `worktreeCleanup`, which projects can also set, along
+with the `worktree` rules in `storageCleanup`; T3 Code refuses a policy that locks only the rules.
+Manage `idleCompaction` rather than the older `compactIdleThreads`. A Claude instance's own idle
+compaction choice still wins over `idleCompaction`.
 
 A default changes an existing setting but cannot add an entry, such as a provider instance, because
 users could never remove it. Lock the entry, or set provider fields with
@@ -137,8 +138,8 @@ desktop app, keep `desktop` in the list, or the app cannot start.
 
 Without `remote`, the server only listens on this machine, does not create pairing links, and
 signs out devices that paired earlier. The desktop app starts with network access and Tailscale
-Serve off, whatever the user chose, and the server turns off Tailscale Serve that forwards to it.
-T3 Connect is a way for remote clients to reach the machine, so it turns off too. To keep remote
+Serve off, whatever the user chose. The server turns off Tailscale Serve HTTPS forwarding to its
+port, such as one `t3 pair --tailscale` set up, and does not start while it stays on. T3 Connect is a way for remote clients to reach the machine, so it turns off too. To keep remote
 access but turn off only T3 Connect, set `"connect": false`.
 
 ### Other capabilities
