@@ -343,6 +343,7 @@ function makeTunnelLimits(
         }
         return yield* reserve;
       }),
+    getLimit: () => Effect.die("unused"),
   });
 }
 

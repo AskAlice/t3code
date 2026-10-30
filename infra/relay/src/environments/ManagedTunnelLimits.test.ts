@@ -121,6 +121,27 @@ const reserve = (
     ),
   );
 
+const getLimit = (input: { readonly override?: number; readonly plan: RelayT3ChatPlan | null }) =>
+  Effect.gen(function* () {
+    const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+    return yield* limits.getLimit({ userId: "user-1", plan: input.plan });
+  }).pipe(
+    Effect.provide(
+      ManagedTunnelLimits.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            RelayDb.RelayDb,
+            makeFakeDb({
+              otherSlots: () => 0,
+              ...(input.override === undefined ? {} : { override: input.override }),
+            }),
+          ),
+        ),
+        Layer.provide(t3ChatLayer("free")),
+      ),
+    ),
+  );
+
 describe("ManagedTunnelLimits", () => {
   it.effect("rejects concurrent reservations past the limit", () => {
     const reserved: Array<string> = [];
@@ -362,6 +383,7 @@ describe("ManagedTunnelLimits", () => {
         yield* reserve({ activeTunnels: limit - 1, plan });
         const error = yield* Effect.flip(reserve({ activeTunnels: limit, plan }));
         expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: limit });
+        expect(yield* getLimit({ plan })).toBe(limit);
       }
     }),
   );
@@ -372,6 +394,8 @@ describe("ManagedTunnelLimits", () => {
         const error = yield* Effect.flip(reserve({ activeTunnels: 3, plan }));
         expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: 3 });
       }
+      expect(yield* getLimit({ plan: "free" })).toBe(3);
+      expect(yield* getLimit({ plan: null })).toBe(3);
     }),
   );
 
@@ -383,6 +407,7 @@ describe("ManagedTunnelLimits", () => {
           reserve({ override, activeTunnels: override, plan: "premier", lookups }),
         );
         expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: override });
+        expect(yield* getLimit({ override, plan: "premier" })).toBe(override);
       }
       expect(lookups).toEqual([]);
     }),

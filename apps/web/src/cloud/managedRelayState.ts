@@ -150,21 +150,26 @@ export function useManagedRelayDevices() {
 /** How this account can raise its tunnel cap: link T3 Chat, or upgrade the linked plan. */
 export type ManagedTunnelUpgrade = "link" | "pro" | "premier" | null;
 
-// Mirrors the relay's cap without manual overrides, which the relay does not expose.
+// Older relays omit `maxTunnels`, so fall back to the plan's default cap.
 function managedTunnelCap(t3Chat: RelayT3ChatLinkResponse): {
   readonly limit: number;
   readonly upgrade: ManagedTunnelUpgrade;
 } {
-  if (!t3Chat.available) return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: null };
+  const cap = (planLimit: number, upgrade: ManagedTunnelUpgrade) => {
+    const limit = t3Chat.maxTunnels ?? planLimit;
+    // Every upgrade offers Premier, which a manual override may already exceed.
+    return { limit, upgrade: limit < T3CHAT_PLAN_TUNNEL_LIMITS.premier ? upgrade : null };
+  };
+  if (!t3Chat.available) return cap(DEFAULT_MANAGED_TUNNEL_LIMIT, null);
   switch (t3Chat.link?.plan) {
     case "premier":
-      return { limit: T3CHAT_PLAN_TUNNEL_LIMITS.premier, upgrade: null };
+      return cap(T3CHAT_PLAN_TUNNEL_LIMITS.premier, null);
     case "pro":
-      return { limit: T3CHAT_PLAN_TUNNEL_LIMITS.pro, upgrade: "premier" };
+      return cap(T3CHAT_PLAN_TUNNEL_LIMITS.pro, "premier");
     case "free":
-      return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: "pro" };
+      return cap(DEFAULT_MANAGED_TUNNEL_LIMIT, "pro");
     case undefined:
-      return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: "link" };
+      return cap(DEFAULT_MANAGED_TUNNEL_LIMIT, "link");
   }
 }
 
