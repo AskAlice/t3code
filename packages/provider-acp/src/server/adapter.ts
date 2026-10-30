@@ -178,6 +178,10 @@ export interface AcpAdapterV2ExtensionContext {
     readonly status: "completed" | "failed" | "cancelled";
     readonly result: string | null;
   }) => Effect.Effect<void>;
+  readonly emitAssistantText: (input: {
+    readonly sessionId: string;
+    readonly text: string;
+  }) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly applyBackgroundTaskMutation: (mutation: {
     readonly sessionId: string;
     readonly taskId: string;
@@ -6287,6 +6291,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (yield* Ref.get(stoppedRunQuarantine)) return;
                     if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
                     yield* finishSubagentFromNotice(notice);
+                  }),
+                ).pipe(Effect.asVoid),
+              emitAssistantText: ({ sessionId, text }) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    if ((yield* Ref.get(activeSessionId)) !== sessionId) return;
+                    yield* projectAcpRuntimeSessionUpdateEffect({
+                      sessionId,
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text },
+                      },
+                    });
                   }),
                 ).pipe(Effect.asVoid),
               applyBackgroundTaskMutation: (incoming) =>

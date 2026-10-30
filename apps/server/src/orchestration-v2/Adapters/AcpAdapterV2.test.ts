@@ -2151,6 +2151,13 @@ describe("AcpAdapterV2", () => {
                     content: [{ type: "content", content: { type: "text", text: summary } }],
                     rawOutput: { content: summary, detailedContent: summary },
                   });
+                  for (const data of [
+                    { summary: "Reviewer sent it back.", outcome: "continue" },
+                    { summary: "Reviewer blocked it.", outcome: "blocked" },
+                    { summary: "Legacy failure.", success: false },
+                  ]) {
+                    yield* sessionEvent!({ sessionId, type: "session.task_complete", data });
+                  }
                   yield* sessionEvent!({
                     sessionId,
                     type: "session.task_complete",
