@@ -131,7 +131,10 @@ import { useResolveClassNames } from "uniwind";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
 import { composerImageGallery } from "../../lib/composerImageGallery";
+import { isFileBackedComposerAttachment } from "../../lib/composerImages";
+import { useLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
 import { messageImageGallery } from "./messageImageGallery";
+import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { inlineFilePreviewKind, isPdfFile } from "../../lib/filePreview";
 import { ThreadInlineFilePreview } from "./ThreadInlineFilePreview";
@@ -487,12 +490,57 @@ function AssistantForkButton(props: {
   );
 }
 
+function MessageImage(props: {
+  readonly source: ComponentPropsWithRef<typeof ExpoImage>["source"];
+  readonly className: string;
+  readonly maxWidth?: number;
+  readonly height?: number;
+  readonly onLoad?: () => void;
+  readonly onError?: () => void;
+}) {
+  const imageStyle = useResolveClassNames(props.className);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const displaySize =
+    props.maxWidth !== undefined && size !== null
+      ? resolveMarkdownImageDisplaySize({
+          sourceWidth: size.width,
+          sourceHeight: size.height,
+          availableWidth: props.maxWidth,
+        })
+      : null;
+  return (
+    <ExpoImage
+      source={props.source}
+      cachePolicy="memory-disk"
+      style={[
+        imageStyle,
+        props.maxWidth !== undefined
+          ? (displaySize ?? {
+              width: Math.min(props.maxWidth, MARKDOWN_IMAGE_MAX_WIDTH),
+              aspectRatio: 1.3,
+            })
+          : props.height !== undefined
+            ? { height: props.height }
+            : undefined,
+      ]}
+      contentFit={props.maxWidth === undefined ? "cover" : "contain"}
+      onLoad={(event) => {
+        if (props.maxWidth !== undefined) setSize(event.source);
+        props.onLoad?.();
+      }}
+      onError={props.onError}
+    />
+  );
+}
+
 function MessageAttachmentImage(props: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
   readonly name: string;
   readonly mimeType: string;
   readonly className: string;
+  readonly maxWidth?: number;
+  readonly height?: number;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const withGallery = useFilePreviewGallery();
@@ -506,11 +554,19 @@ function MessageAttachmentImage(props: {
   const uri = useAssetUrl(props.environmentId, resource);
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
-  const imageStyle = useResolveClassNames(props.className);
 
   if (uri === null) {
     return (
-      <View className={`${props.className} items-center justify-center`}>
+      <View
+        className={`${props.className} items-center justify-center`}
+        style={
+          props.maxWidth !== undefined
+            ? { width: Math.min(props.maxWidth, MARKDOWN_IMAGE_MAX_WIDTH), aspectRatio: 1.3 }
+            : props.height !== undefined
+              ? { height: props.height }
+              : undefined
+        }
+      >
         <AppActivityIndicator />
       </View>
     );
@@ -539,11 +595,11 @@ function MessageAttachmentImage(props: {
           )
         }
       >
-        <ExpoImage
+        <MessageImage
           source={assetImageSource(props.environmentId, resource, uri)}
-          cachePolicy="memory-disk"
-          style={imageStyle}
-          contentFit="cover"
+          className={props.className}
+          maxWidth={props.maxWidth}
+          height={props.height}
           onLoad={() => {
             retriedImage.current = false;
           }}
@@ -795,15 +851,26 @@ function UserMessageMedia(props: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly pendingAttachments: QueuedThreadMessage["attachments"];
   readonly environmentId: EnvironmentId;
+  readonly maxWidth: number;
   readonly onPressPreview: (source: FilePreviewSource) => void;
   readonly onPlaybackStart: () => void;
 }) {
-  const imageClassName = "aspect-[1.3] w-full bg-user-bubble-foreground/15";
+  const attachments = [...props.pendingAttachments, ...props.attachments];
+  const collage = attachments.length > 1 && attachments.every(isImageAttachment);
+  const gallery = composerImageGallery(props.pendingAttachments);
+  const imageProps = (index: number) => ({
+    className: "w-full bg-user-bubble-foreground/15",
+    maxWidth: collage ? undefined : props.maxWidth,
+    height: !collage
+      ? undefined
+      : attachments.length === 2 || (attachments.length === 3 && index === 0)
+        ? 192
+        : attachments.length === 3
+          ? (192 - StyleSheet.hairlineWidth) / 2
+          : 96,
+  });
   const media = [
-    ...props.pendingAttachments.map((attachment) => {
-      const previewUri = attachment.type === "image" ? attachment.previewUri : attachment.fileUri;
-      const imageUri =
-        attachment.type === "image" ? (attachment.dataUrl ?? previewUri) : previewUri;
+    ...props.pendingAttachments.map((attachment, index) => {
       const image = isImageAttachment(attachment);
       return {
         id: attachment.id,
@@ -815,46 +882,31 @@ function UserMessageMedia(props: {
               attachmentId={attachment.uploadedAttachmentId}
               name={attachment.name}
               mimeType={attachment.mimeType}
-              className={imageClassName}
+              {...imageProps(index)}
               onPressPreview={props.onPressPreview}
             />
-          ) : image ? (
-            <Pressable
-              accessibilityRole="imagebutton"
-              accessibilityLabel={`Open ${attachment.name}`}
-              onPress={() =>
-                props.onPressPreview({
-                  kind: "image",
-                  name: attachment.name,
-                  uri: imageUri,
-                  gallery: composerImageGallery(props.pendingAttachments),
-                })
-              }
-            >
-              <Image source={{ uri: previewUri }} style={{ width: "100%", aspectRatio: 1.3 }} />
-            </Pressable>
-          ) : (
+          ) : !image && attachment.uploadedAttachmentId ? (
             <ThreadMarkdownVideo
-              source={
-                attachment.uploadedAttachmentId
-                  ? attachmentVideoPreviewSource(props.environmentId, {
-                      ...attachment,
-                      id: attachment.uploadedAttachmentId,
-                    })
-                  : {
-                      type: "media",
-                      name: attachment.name,
-                      mimeType: attachment.mimeType,
-                      uri: attachment.fileUri,
-                    }
-              }
+              source={attachmentVideoPreviewSource(props.environmentId, {
+                ...attachment,
+                type: "file",
+                id: attachment.uploadedAttachmentId,
+              })}
               onPlaybackStart={props.onPlaybackStart}
               borderRadius={20}
+            />
+          ) : (
+            <PendingMessageMedia
+              attachment={attachment}
+              gallery={gallery}
+              {...imageProps(index)}
+              onPressPreview={props.onPressPreview}
+              onPlaybackStart={props.onPlaybackStart}
             />
           ),
       };
     }),
-    ...props.attachments.map((attachment) => ({
+    ...props.attachments.map((attachment, index) => ({
       id: attachment.id,
       image: isImageAttachment(attachment),
       content: isImageAttachment(attachment) ? (
@@ -863,7 +915,7 @@ function UserMessageMedia(props: {
           attachmentId={attachment.id}
           name={attachment.name}
           mimeType={attachment.mimeType}
-          className={imageClassName}
+          {...imageProps(props.pendingAttachments.length + index)}
           onPressPreview={props.onPressPreview}
         />
       ) : isFileAttachment(attachment) ? (
@@ -877,22 +929,33 @@ function UserMessageMedia(props: {
       ) : null,
     })),
   ];
-  const collage = media.length > 1 && media.every((item) => item.image);
   return collage ? (
     <View
       className="overflow-hidden rounded-[20px] bg-border"
-      style={{ gap: StyleSheet.hairlineWidth }}
+      style={{ width: 320, maxWidth: "100%", alignSelf: "flex-end", gap: StyleSheet.hairlineWidth }}
     >
-      {media
-        .filter((_, index) => index % 2 === 0)
-        .map((item, index) => (
-          <View key={item.id} className="flex-row" style={{ gap: StyleSheet.hairlineWidth }}>
-            <View className="min-w-0 flex-1">{item.content}</View>
-            {media[index * 2 + 1] ? (
-              <View className="min-w-0 flex-1">{media[index * 2 + 1]!.content}</View>
-            ) : null}
+      {media.length === 3 ? (
+        <View className="flex-row" style={{ gap: StyleSheet.hairlineWidth }}>
+          <View className="min-w-0" style={{ flex: 3 }}>
+            {media[0]!.content}
           </View>
-        ))}
+          <View className="min-w-0" style={{ flex: 2, gap: StyleSheet.hairlineWidth }}>
+            {media[1]!.content}
+            {media[2]!.content}
+          </View>
+        </View>
+      ) : (
+        media
+          .filter((_, index) => index % 2 === 0)
+          .map((item, index) => (
+            <View key={item.id} className="flex-row" style={{ gap: StyleSheet.hairlineWidth }}>
+              <View className="min-w-0 flex-1">{item.content}</View>
+              {media[index * 2 + 1] ? (
+                <View className="min-w-0 flex-1">{media[index * 2 + 1]!.content}</View>
+              ) : null}
+            </View>
+          ))
+      )}
       <View pointerEvents="none" className="absolute inset-0 rounded-[20px] border border-border" />
     </View>
   ) : (
@@ -901,7 +964,7 @@ function UserMessageMedia(props: {
         <View
           key={item.id}
           className="overflow-hidden rounded-[20px]"
-          style={{ width: item.image ? "100%" : 320, maxWidth: "100%" }}
+          style={{ width: item.image ? undefined : 320, maxWidth: "100%" }}
         >
           {item.content}
           <View
@@ -911,6 +974,63 @@ function UserMessageMedia(props: {
         </View>
       ))}
     </View>
+  );
+}
+
+function PendingMessageMedia(props: {
+  readonly attachment: QueuedThreadMessage["attachments"][number];
+  readonly gallery: ReturnType<typeof composerImageGallery>;
+  readonly className: string;
+  readonly maxWidth?: number;
+  readonly height?: number;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
+  readonly onPlaybackStart: () => void;
+}) {
+  const { attachment } = props;
+  const fileBacked = isFileBackedComposerAttachment(attachment);
+  const preview = useLocalAttachmentPreview(fileBacked ? attachment : null);
+  if (isImageAttachment(attachment)) {
+    const uri = fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri);
+    return (
+      <Pressable
+        accessibilityRole="imagebutton"
+        accessibilityLabel={`Open ${attachment.name}`}
+        onPress={() => {
+          const source = composerImageGallery([attachment])[0];
+          if (source) props.onPressPreview({ ...source, gallery: props.gallery });
+        }}
+      >
+        <MessageImage
+          source={uri === null ? undefined : { uri }}
+          className={props.className}
+          maxWidth={props.maxWidth}
+          height={props.height}
+        />
+      </Pressable>
+    );
+  }
+  if (preview.uri === null) {
+    return (
+      <View className="aspect-video items-center justify-center bg-black">
+        {preview.error ? (
+          <Text className="p-3 text-center text-xs text-white/70">{preview.error.message}</Text>
+        ) : (
+          <AppActivityIndicator />
+        )}
+      </View>
+    );
+  }
+  return (
+    <ThreadMarkdownVideo
+      source={{
+        type: "media",
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        uri: preview.uri,
+      }}
+      onPlaybackStart={props.onPlaybackStart}
+      borderRadius={20}
+    />
   );
 }
 
@@ -1803,6 +1923,7 @@ function renderFeedEntry(
                 attachments={mediaAttachments}
                 pendingAttachments={pendingMedia}
                 environmentId={props.environmentId}
+                maxWidth={props.userBubbleMaxWidth}
                 onPressPreview={props.onPressPreview}
                 onPlaybackStart={props.onPlaybackStart}
               />
