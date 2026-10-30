@@ -486,6 +486,21 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ? ""
         : reference.label,
     ).trim() === "";
+  const audioOnly =
+    !folded &&
+    userMessage.attribution !== "guest" &&
+    userAudio.length > 0 &&
+    regularImages.length + userVideos.length + otherUserFiles.length + unknownAttachments.length ===
+      0 &&
+    replaceComposerContextReferences(resolvedContext.text, (reference) =>
+      attachmentReferences.some(
+        (attached) =>
+          attached.contextId === reference.contextId &&
+          userAudio.some((file) => file.id === attached.attachmentId),
+      )
+        ? ""
+        : reference.label,
+    ).trim() === "";
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
     .map((record) => record.contextId);
@@ -787,8 +802,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             BUBBLE_CHIP_CLASS_NAME,
             userMessage.attribution === "guest"
               ? guestBubbleClassName(false)
-              : !mediaOnly && !fileCardsOnly && "bg-message",
-            !folded && !mediaOnly && !fileCardsOnly && "p-3",
+              : !mediaOnly && !fileCardsOnly && !audioOnly && "bg-message",
+            !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
             folded && expanded && "w-full",
           )}
         >
@@ -823,11 +838,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             >
               {!mediaAboveText && mediaBlock}
               {userAudio.length > 0 ? (
-                <div className="mb-2 flex max-w-full flex-col gap-1">
+                <div className={cn("flex max-w-full flex-col gap-1", !audioOnly && "mb-2")}>
                   {userAudio.map((file) => (
                     <InlineAudioPreview
                       key={file.id}
                       name={file.name}
+                      variant={audioOnly ? "bubble" : "chip"}
                       environmentId={ctx.activeThreadEnvironmentId}
                       resource={{
                         _tag: "attachment",
@@ -929,7 +945,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   ))}
                 </div>
               ) : null}
-              {fileCardsOnly ? null : (
+              {fileCardsOnly || audioOnly ? null : (
                 <div onCopyCapture={onBodyCopyCapture}>
                   <CollapsibleUserMessageBody
                     text={resolvedContext.text}
