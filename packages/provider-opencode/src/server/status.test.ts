@@ -31,6 +31,7 @@ import {
   OPENCODE_2_RESPONSES,
   replayOpenCodeServer,
 } from "./probeResponses.fixture.ts";
+import { DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
@@ -658,13 +659,15 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
 
         NodeAssert.ok(variant?.type === "select");
         NodeAssert.deepEqual(
-          variant.options.find((option) => option.id === "default"),
-          { id: "default", label: "Default" },
+          variant.options.find((option) => option.id === DEFAULT_VARIANT_CHOICE_ID),
+          { id: DEFAULT_VARIANT_CHOICE_ID, label: "Default" },
           "OpenCode cannot infer a default variant, so the picker needs a choice that sends none",
         );
-        NodeAssert.equal(variant.currentValue, "default");
+        NodeAssert.equal(variant.currentValue, DEFAULT_VARIANT_CHOICE_ID);
         NodeAssert.deepEqual(
-          variant.options.map((option) => option.id).filter((id) => id !== "default"),
+          variant.options
+            .map((option) => option.id)
+            .filter((id) => id !== DEFAULT_VARIANT_CHOICE_ID),
           variants,
         );
       }),

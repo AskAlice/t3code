@@ -54,6 +54,7 @@ import {
   reconcileOpenCodePromptAdmissionStatus,
 } from "./adapter.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeOpenCodeSettings = Schema.decodeEffect(OpenCodeSettings);
@@ -312,7 +313,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         {},
-        [{ id: "variant", value: "default" }],
+        [{ id: "variant", value: DEFAULT_VARIANT_CHOICE_ID }],
       );
       yield* harness.startTurn().pipe(Effect.forkScoped);
       const prompt = yield* Effect.promise(() => prompted.promise);

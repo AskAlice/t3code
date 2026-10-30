@@ -7,6 +7,7 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
+  DEFAULT_VARIANT_CHOICE_ID,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -197,11 +198,11 @@ describe("provider-reported option display", () => {
   it("shows the catalog's Default choice while no variant is chosen", () => {
     const withDefault = {
       ...descriptor,
-      options: [{ id: "default", label: "Default" }, ...descriptor.options],
-      currentValue: "default",
+      options: [{ id: DEFAULT_VARIANT_CHOICE_ID, label: "Default" }, ...descriptor.options],
+      currentValue: DEFAULT_VARIANT_CHOICE_ID,
     };
-    expect(getProviderOptionCurrentValue(withDefault, selection)).toBe("default");
-    expect(getProviderOptionCurrentLabel(withDefault, selection)).toBe("Default");
+    expect(getProviderOptionCurrentValue(withDefault, selection)).toBe(DEFAULT_VARIANT_CHOICE_ID);
+    expect(getProviderOptionCurrentLabel(withDefault, selection, reported)).toBe("Default");
   });
 
   it.each([

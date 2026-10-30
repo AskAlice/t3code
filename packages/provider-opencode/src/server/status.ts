@@ -12,7 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   buildServerProvider,
@@ -202,24 +202,22 @@ function openCodeVariantDescriptors(
   variants: ReadonlyArray<string>,
 ): Array<ProviderOptionDescriptor> {
   if (variants.length === 0) return [];
-  const { OPENCODE_DEFAULT_VARIANT } = OpenCodeRuntime;
   const inferred = inferDefaultVariant(providerID, variants);
-  const ids =
-    inferred !== undefined || variants.includes(OPENCODE_DEFAULT_VARIANT)
-      ? variants
-      : [OPENCODE_DEFAULT_VARIANT, ...variants];
-  const defaultVariant = inferred ?? OPENCODE_DEFAULT_VARIANT;
+  const options = variants.map((id) => ({
+    id,
+    label: titleCaseSlug(id),
+    ...(id === inferred ? { isDefault: true } : {}),
+  }));
   return [
     {
       id: "variant",
       label: "Reasoning",
       type: "select",
-      options: ids.map((id) => ({
-        id,
-        label: titleCaseSlug(id),
-        ...(id === inferred ? { isDefault: true } : {}),
-      })),
-      currentValue: defaultVariant,
+      options:
+        inferred === undefined
+          ? [{ id: DEFAULT_VARIANT_CHOICE_ID, label: "Default" }, ...options]
+          : options,
+      currentValue: inferred ?? DEFAULT_VARIANT_CHOICE_ID,
     },
   ];
 }
