@@ -104,10 +104,14 @@ another turn until someone lowers its mode; its queued messages wait and send on
 user's default above the limit starts new threads at the limit instead.
 
 With `maxRuntimeMode` set, each provider's launch settings belong to you: binary path, launch
-arguments, config home, and every environment variable come from `providers.instances` or
-T3 Code's defaults, and users cannot change them. Otherwise a wrapper script, a launch flag, or a
-variable such as `NODE_OPTIONS` could turn off the provider's own approvals. Pin any variables
-your users need, such as a gateway URL, in `providers.instances`.
+arguments, config home, and the environment variables set on each provider come from
+`providers.instances` or T3 Code's defaults, and users cannot change them. Otherwise a wrapper
+script, a launch flag, or a variable such as `NODE_OPTIONS` could turn off the provider's own
+approvals. Pin any variables your users need, such as a gateway URL, in `providers.instances`.
+Variables in the environment that starts T3 Code itself still reach providers.
+
+ACP agents' own mode menus have no effect under `maxRuntimeMode`, except Antigravity's, whose modes
+T3 Code can place under the limit.
 
 Providers still read their own configuration from the user's home directory, for example
 `~/.claude` and `~/.codex`. Restrict those with each provider's managed configuration; see
