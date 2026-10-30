@@ -20,7 +20,7 @@ The copied URL uses the route this device is connected over, so an agent on the
 same device can reach it.
 
 For the machine you are on, open the menu next to its name at the top of
-**Settings → Connections** instead. Once T3 Connect has checked that other
+**Settings → Sharing & Access** instead. Once T3 Connect has checked that other
 devices can reach it, **Copy MCP URL** there gives the T3 Connect address its
 tunnel is serving. On a server set up with `t3 connect`, `t3 connect status`
 prints the same URL. A saved environment with the same name is a different

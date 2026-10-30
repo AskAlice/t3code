@@ -72,5 +72,6 @@ it("omits MCP URLs when no tunnel hostname was checked", () => {
   assert.notInclude(formatCloudStatus({ ...linkedStatus, reachability }), "MCP URL");
   assert.notInclude(formatCloudStatus({ ...linkedStatus, reachability: null }), "MCP URL");
   assert.notInclude(formatCloudStatus({ ...linkedStatus, desired: false }), "MCP URL");
+  assert.notInclude(formatCloudStatus({ ...linkedStatus, revoked: true }), "MCP URL");
   assert.notInclude(formatCloudStatus({ ...linkedStatus, linkMode: "publish_only" }), "MCP URL");
 });

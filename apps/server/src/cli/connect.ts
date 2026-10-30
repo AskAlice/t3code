@@ -204,7 +204,7 @@ export function formatCloudStatus(
           ? "Start T3 to provision the environment link and launch its managed tunnel."
           : undefined;
   const mcpUrl =
-    status.reachability?.status === "reachable"
+    !status.revoked && status.reachability?.status === "reachable"
       ? connectReachableMcpUrl(status.reachability)
       : null;
 
