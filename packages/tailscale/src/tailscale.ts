@@ -222,7 +222,7 @@ export const parseTailscaleStatus = (
   );
 
 const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function* (
-  subcommand: "status" | "debug",
+  subcommand: "status" | "serve" | "debug",
   args: readonly string[],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -448,6 +448,52 @@ export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe"
     ["serve", `--https=${servePort}`, "off"],
     TAILSCALE_SERVE_TIMEOUT,
   );
+});
+
+const TailscaleServeStatusJson = Schema.Struct({
+  Web: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        Handlers: Schema.optional(
+          Schema.Record(Schema.String, Schema.Struct({ Proxy: Schema.optional(Schema.String) })),
+        ),
+      }),
+    ),
+  ),
+});
+const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(TailscaleServeStatusJson),
+);
+const LOOPBACK_SERVE_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/** The HTTPS ports whose Serve handlers proxy to `localPort` on this machine's loopback. */
+export const parseTailscaleServePortsProxyingTo = (
+  rawServeStatusJson: string,
+  localPort: number,
+): ReadonlyArray<number> => {
+  const web = Option.getOrUndefined(decodeTailscaleServeStatusJson(rawServeStatusJson))?.Web ?? {};
+  return Object.entries(web).flatMap(([hostPort, site]) => {
+    const servePort = Number(hostPort.slice(hostPort.lastIndexOf(":") + 1));
+    const proxiesHere = Object.values(site.Handlers ?? {}).some((handler) => {
+      if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return false;
+      const target = new URL(handler.Proxy);
+      return LOOPBACK_SERVE_HOSTS.has(target.hostname) && Number(target.port) === localPort;
+    });
+    return proxiesHere && Number.isInteger(servePort) ? [servePort] : [];
+  });
+};
+
+/** Turns off every Serve port that forwards to `localPort`, such as one left by `t3 pair`. */
+export const disableTailscaleServeProxyingTo = Effect.fn(
+  "tailscale.disableTailscaleServeProxyingTo",
+)(function* (localPort: number) {
+  const status = yield* readTailscaleOutput("serve", ["serve", "status", "--json"]);
+  const servePorts = parseTailscaleServePortsProxyingTo(status, localPort);
+  yield* Effect.forEach(servePorts, (servePort) => disableTailscaleServe({ servePort }), {
+    discard: true,
+  });
+  return servePorts;
 });
 
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(

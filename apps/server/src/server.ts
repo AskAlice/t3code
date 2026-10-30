@@ -204,7 +204,11 @@ import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import {
+  disableTailscaleServe,
+  disableTailscaleServeProxyingTo,
+  ensureTailscaleServe,
+} from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
 
 // Escaped MCP handoff provenance can exceed find-my-way's 100-character segment default.
@@ -908,6 +912,27 @@ const layerMakeServer = Layer.unwrap(
           ),
         )
       : Layer.empty;
+    // A Serve mapping from before the policy, such as one `t3 pair --tailscale` left, would keep
+    // forwarding the tailnet to this server; turn off the ones that point here.
+    const layerStaleTailscaleServe = Layer.effectDiscard(
+      Effect.gen(function* () {
+        if (ManagedLimits.allowsRemoteClients(yield* ManagedPolicy.ManagedPolicy)) return;
+        const address = (yield* HttpServer.HttpServer).address;
+        if (typeof address === "string" || !("port" in address)) return;
+        yield* awaitActivation.pipe(
+          Effect.andThen(disableTailscaleServeProxyingTo(address.port)),
+          Effect.tap((servePorts) =>
+            servePorts.length === 0
+              ? Effect.void
+              : Effect.logInfo("Turned off Tailscale Serve the managed policy does not allow", {
+                  servePorts,
+                }),
+          ),
+          Effect.catch(() => Effect.void),
+          Effect.forkScoped,
+        );
+      }),
+    );
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(
       Effect.gen(function* () {
         const cloudLink = yield* CloudLink.CloudLink;
@@ -1120,6 +1145,7 @@ const layerMakeServer = Layer.unwrap(
       layerHttpListening,
       layerRuntimeState.pipe(Layer.provide(layerLauncher)),
       layerTailscaleServe,
+      layerStaleTailscaleServe,
       layerCloudDesiredLinkReconcile,
       HeapSnapshot.layer,
     );
