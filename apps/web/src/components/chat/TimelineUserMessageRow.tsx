@@ -62,7 +62,10 @@ import {
   resolveUserMessageContext,
   selectedMessageContextFragment,
 } from "~/lib/composerContextRecords";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  collectComposerContextReferences,
+  formatComposerContextReference,
+} from "@t3tools/shared/composerContextReferences";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextClipboardHtml,
@@ -533,6 +536,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           },
           records: resolvedContext.records,
         });
+  const copyText =
+    resolvedContext.text ||
+    (mediaOnly && contextClipboardFragment
+      ? resolvedContext.records
+          .flatMap((record) => {
+            const known = asKnownContextRecord(record);
+            return (known?.kind === "image" || known?.kind === "file") &&
+              (regularImages.some((image) => image.id === known.attachmentId) ||
+                userVideos.some((file) => file.id === known.attachmentId))
+              ? [formatComposerContextReference(known)]
+              : [];
+          })
+          .join("\n")
+      : "");
   const onBodyCopyCapture = (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (resolvedContext.records.length === 0 || !event.clipboardData) return;
     const selection = window.getSelection();
@@ -745,9 +762,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
             )}
-            {resolvedContext.text && (
+            {copyText && (
               <MessageCopyButton
-                text={contextClipboardFragment ? resolvedContext.text : plainText}
+                text={contextClipboardFragment ? copyText : plainText}
                 {...(contextClipboardFragment
                   ? {
                       extraFlavors: {
