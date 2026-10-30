@@ -53,9 +53,10 @@ const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
 > = [
   [/handler does not exist/i, "no-existing-handler"],
   [/not logged in|logged out|needs? login/i, "not-logged-in"],
-  // Only answers that confirm no daemon; a dial can also fail for want of permission.
+  // Only answers that confirm no daemon; a dial can also fail for want of permission. Windows
+  // reports a missing service as its pipe not being found, without the usual prefix.
   [
-    /doesn't appear to be running|tailscaled\.service not running|failed to connect to local tailscale[\s\S]*(connection refused|no such file or directory|cannot find the file)/i,
+    /doesn't appear to be running|tailscaled\.service not running|tailscale is stopped|tailscaled: the system cannot find the file specified|failed to connect to local tailscale[\s\S]*(connection refused|no such file or directory|cannot find the file)/i,
     "not-running",
   ],
   [/permission denied|access denied|must be root|operation not permitted/i, "permission-denied"],

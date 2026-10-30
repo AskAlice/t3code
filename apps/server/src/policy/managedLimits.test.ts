@@ -156,7 +156,11 @@ it.effect(
         assert.include(unread.message, "does not start until Tailscale Serve can be checked");
       }
       // Tailscale down, logged out, or not installed forwards nothing now.
-      for (const stderr of [dialFailure("connection refused"), "NeedsLogin: not logged in"]) {
+      for (const stderr of [
+        dialFailure("connection refused"),
+        "NeedsLogin: not logged in",
+        String.raw`Get "http://local-tailscaled.sock/localapi/v0/serve-config": open \\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled: The system cannot find the file specified.`,
+      ]) {
         yield* close({ status: { stdout: "", exitCode: 1, stderr } });
       }
       const spawnFailing = (tag: "NotFound" | "PermissionDenied") =>
@@ -171,6 +175,15 @@ it.effect(
           ),
         );
       yield* spawnFailing("NotFound");
+      // Node throws this instead when PATH ends in a file.
+      yield* ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.die(Object.assign(new Error("spawn tailscale ENOTDIR"), { code: "ENOTDIR" })),
+          ),
+        ),
+      );
       // A CLI that is there but will not run might still front a daemon with a mapping.
       yield* spawnFailing("PermissionDenied").pipe(Effect.flip);
     });

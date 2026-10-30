@@ -77,6 +77,11 @@ const refuse = (policy: PolicyDocument, action: string, detail?: string) =>
 
 export const refuseConnect = (policy: PolicyDocument) => refuse(policy, "T3 Connect");
 
+// Node throws ENOTDIR, outside the spawner's error mapping, when PATH ends in a file.
+const isMissingCli = (cause: unknown) =>
+  (PlatformError.isPlatformError(cause) && cause.reason._tag === "NotFound") ||
+  (cause instanceof Error && "code" in cause && cause.code === "ENOTDIR");
+
 /** Tailscale answers that leave nothing forwarding here right now. */
 const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new Set([
   "not-running",
@@ -98,9 +103,7 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
     Effect.catchTags({
       // Only a CLI that is not there; one that will not run might still front a daemon.
       TailscaleCommandSpawnError: (error) =>
-        PlatformError.isPlatformError(error.cause) && error.cause.reason._tag === "NotFound"
-          ? Effect.succeed([])
-          : Effect.fail(error),
+        isMissingCli(error.cause) ? Effect.succeed([]) : Effect.fail(error),
       TailscaleCommandExitError: (error) =>
         NOTHING_TO_CLOSE.has(error.stderrDiagnostic) ? Effect.succeed([]) : Effect.fail(error),
     }),
