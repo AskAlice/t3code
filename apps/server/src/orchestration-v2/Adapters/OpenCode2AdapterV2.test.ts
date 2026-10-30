@@ -2230,6 +2230,39 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("finishes a workspace command that never starts an execution", () =>
+    Effect.gen(function* () {
+      // A plugin command whose handler skips the model returns 204 and emits no execution events.
+      const { runtime, thread } = yield* resumed([
+        out("command.list", "<any>"),
+        reply("command.list", { location: { directory: WORK }, data: [{ name: "noop" }] }),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_idle_before", time: { created: 1 }, type: "idle", outcome: "succeeded" },
+          ],
+          cursor: {},
+        }),
+        out("session.command", { sessionID: SESSION, name: "noop", text: "" }),
+        reply("session.command", null),
+        out("session.active"),
+        replyData("session.active", {}),
+      ]);
+      // Stays below SILENT_STREAM_TIMEOUT so the bound cannot trigger a stream reconnect.
+      const terminal = yield* terminalOf(runtime).pipe(
+        Effect.timeoutOption("1 second"),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        message: { ...turnInput(thread).message, text: "/noop" },
+      });
+      yield* TestClock.adjust("1 second");
+      const ended = Option.getOrUndefined(yield* Fiber.join(terminal));
+      assert.equal(ended?.status, "completed", "the /noop command turn never ended");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
