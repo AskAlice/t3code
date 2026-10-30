@@ -696,6 +696,29 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     );
   });
 
+  it.effect("keeps Android activity off when reading notification permission fails", () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    vi.mocked(Notifications.getPermissionsAsync).mockRejectedValueOnce(
+      new Error("permission lookup failed"),
+    );
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk"), "user-a");
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true }),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(vi.mocked(configureAndroidAgentNotifications).mock.lastCall).toEqual([
+        expect.any(String),
+        "user-a",
+        false,
+      ]);
+    }).pipe(Effect.provide(layerRelayTest));
+  });
+
   it.effect("keeps a newer Android activity toggle when an older registration fails", () => {
     vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
     vi.spyOn(Platform, "Version", "get").mockReturnValue(36);

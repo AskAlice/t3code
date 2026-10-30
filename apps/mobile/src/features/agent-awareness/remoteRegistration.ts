@@ -663,7 +663,21 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
   };
   configureAndroid(preferences);
   const configurationWrite = ++androidConfigurationWrite;
-  const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken);
+  // A failed registration must not leave its preference applied natively while the relay keeps
+  // the old one, unless a newer registration has configured the device since.
+  const restoreAndroidOnError = Effect.onError(() =>
+    Effect.sync(() => {
+      if (
+        expectedGeneration === deviceRegistrationGeneration &&
+        configurationWrite === androidConfigurationWrite
+      ) {
+        configureAndroid(storedPreferences);
+      }
+    }),
+  );
+  const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken).pipe(
+    restoreAndroidOnError,
+  );
   const bundleId =
     Platform.OS === "android"
       ? Constants.expoConfig?.android?.package?.trim()
@@ -687,20 +701,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       preferences,
     }),
     expectedGeneration,
-  ).pipe(
-    // A rejected preference change must not stay applied natively while the relay keeps the old
-    // one, unless a newer registration has configured the device since.
-    Effect.onError(() =>
-      Effect.sync(() => {
-        if (
-          expectedGeneration === deviceRegistrationGeneration &&
-          configurationWrite === androidConfigurationWrite
-        ) {
-          configureAndroid(storedPreferences);
-        }
-      }),
-    ),
-  );
+  ).pipe(restoreAndroidOnError);
 });
 
 function registerDeviceForCurrentUser(): Effect.Effect<
