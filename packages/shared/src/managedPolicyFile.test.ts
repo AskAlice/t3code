@@ -86,6 +86,15 @@ describe("readManagedPolicy", () => {
         "/usr/bin/plutil": { stdout: JSON.stringify(contents), exitCode: 0 },
       });
       const settings = JSON.parse(policy);
+      // What macOS 27 writes for a manually installed profile.
+      assert.equal(
+        yield* read(
+          "darwin",
+          profile,
+          plist({ ...settings, PayloadUUID: "e8c7f49b", _manualProfile: true }),
+        ),
+        MACOS_MANAGED_PREFERENCES_PATH,
+      );
       assert.equal(
         yield* read("darwin", profile, plist({ Forced: [{ mcx_preference_settings: settings }] })),
         MACOS_MANAGED_PREFERENCES_PATH,
@@ -101,6 +110,11 @@ describe("readManagedPolicy", () => {
         );
       }
       assert.equal(yield* read("darwin", file), managedPolicyPath("darwin"));
+      const typo = JSON.stringify({ ...settings, limits: { maxRuntimeMod: "auto" } });
+      assert.include(
+        yield* read("darwin", { [managedPolicyPath("darwin")]: typo }),
+        '["limits"]["maxRuntimeMod"]',
+      );
       assert.isUndefined(yield* read("darwin", {}));
       assert.include(
         yield* read("darwin", { ...profile, ...file }, plutil),

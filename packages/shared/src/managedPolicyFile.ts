@@ -1,4 +1,5 @@
 import { ManagedPolicyDocument } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -48,15 +49,17 @@ const decodeDocumentExit = Schema.decodeUnknownExit(ManagedPolicyDocument, {
 /** Decode a policy from JSON text, or from a value a profile already parsed. */
 const decodeDocument = (path: string, raw: unknown) => {
   const decoded = typeof raw === "string" ? decodeDocumentJsonExit(raw) : decodeDocumentExit(raw);
-  return Exit.isFailure(decoded)
-    ? Effect.fail(
-        new ManagedPolicyFileError({
-          path,
-          reason: "it is not valid JSON or does not match the policy schema",
-          cause: decoded.cause,
-        }),
-      )
-    : Effect.succeed(decoded.value);
+  if (Exit.isSuccess(decoded)) return Effect.succeed(decoded.value);
+  const error = Cause.squash(decoded.cause);
+  // The schema message names the offending key, e.g. `Expected no excess property at ["limits"]`.
+  const detail = Schema.isSchemaError(error) ? ` (${error.message.replace(/\s*\n\s*/g, " ")})` : "";
+  return Effect.fail(
+    new ManagedPolicyFileError({
+      path,
+      reason: `it is not valid JSON or does not match the policy schema${detail}`,
+      cause: decoded.cause,
+    }),
+  );
 };
 
 /** Read the policy document at `path`; a missing file means no policy. */
@@ -123,6 +126,15 @@ const decodeForcedExit = Schema.decodeUnknownExit(
   { onExcessProperty: "error" },
 );
 
+// macOS writes `PayloadUUID` and `_manualProfile` beside the profile's own keys; no policy key
+// starts with `Payload` or `_`, so dropping them cannot hide a restriction.
+const withoutProfileKeys = (value: unknown) =>
+  value === null || typeof value !== "object" || Array.isArray(value)
+    ? value
+    : Object.fromEntries(
+        Object.entries(value).filter(([key]) => !key.startsWith("Payload") && !key.startsWith("_")),
+      );
+
 /**
  * Installed managed preferences hold the profile's keys directly, but MCX-style profiles keep
  * them under `Forced[0].mcx_preference_settings`; read either rather than refuse a valid profile.
@@ -130,8 +142,11 @@ const decodeForcedExit = Schema.decodeUnknownExit(
 function unwrapForced(json: string): unknown {
   const parsed = decodeJsonExit(json);
   if (Exit.isFailure(parsed)) return json;
-  const forced = decodeForcedExit(parsed.value);
-  return Exit.isSuccess(forced) ? forced.value.Forced[0].mcx_preference_settings : parsed.value;
+  const preferences = withoutProfileKeys(parsed.value);
+  const forced = decodeForcedExit(preferences);
+  return Exit.isSuccess(forced)
+    ? withoutProfileKeys(forced.value.Forced[0].mcx_preference_settings)
+    : preferences;
 }
 
 /** Read the policy a configuration profile or Group Policy set; absent means no such policy. */
