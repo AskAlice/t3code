@@ -564,11 +564,19 @@ function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAtt
   return attachment.type === "file";
 }
 
+function isMediaAttachment(attachment: ChatAttachment): boolean {
+  return (
+    isImageAttachment(attachment) ||
+    (isFileAttachment(attachment) && videoMimeType(attachment) !== null)
+  );
+}
+
 function MessageAttachmentFile(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatFileAttachment;
   readonly onPressPreview: (source: FilePreviewSource) => void;
   readonly onPlaybackStart: () => void;
+  readonly standaloneMedia?: boolean;
 }) {
   const sourceIdentifier = useId();
   const navigation = useNavigation();
@@ -703,11 +711,21 @@ function MessageAttachmentFile(props: {
 
   if (videoType !== null) {
     return (
-      <View className="my-1" style={{ width: 224, maxWidth: "100%" }}>
+      <View
+        className={props.standaloneMedia ? "overflow-hidden rounded-[20px]" : "my-1"}
+        style={{ width: props.standaloneMedia ? 320 : 224, maxWidth: "100%" }}
+      >
         <ThreadMarkdownVideo
           source={attachmentVideoPreviewSource(props.environmentId, attachment, sourceIdentifier)}
           onPlaybackStart={props.onPlaybackStart}
+          borderRadius={props.standaloneMedia ? 20 : undefined}
         />
+        {props.standaloneMedia ? (
+          <View
+            pointerEvents="none"
+            className="absolute inset-0 rounded-[20px] border border-border"
+          />
+        ) : null}
       </View>
     );
   }
@@ -753,6 +771,129 @@ function MessageAttachmentFile(props: {
         </Pressable>
       </PresentationSource>
     </>
+  );
+}
+
+function UserMessageMedia(props: {
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly pendingAttachments: QueuedThreadMessage["attachments"];
+  readonly environmentId: EnvironmentId;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
+  readonly onPlaybackStart: () => void;
+}) {
+  const imageClassName = "aspect-[1.3] w-full bg-user-bubble-foreground/15";
+  const media = [
+    ...props.pendingAttachments.map((attachment) => {
+      const previewUri = attachment.type === "image" ? attachment.previewUri : attachment.fileUri;
+      const imageUri =
+        attachment.type === "image" ? (attachment.dataUrl ?? previewUri) : previewUri;
+      const image = isImageAttachment(attachment);
+      return {
+        id: attachment.id,
+        image,
+        content:
+          image && attachment.uploadedAttachmentId ? (
+            <MessageAttachmentImage
+              environmentId={props.environmentId}
+              attachmentId={attachment.uploadedAttachmentId}
+              name={attachment.name}
+              mimeType={attachment.mimeType}
+              className={imageClassName}
+              onPressPreview={props.onPressPreview}
+            />
+          ) : image ? (
+            <Pressable
+              accessibilityRole="imagebutton"
+              accessibilityLabel={`Open ${attachment.name}`}
+              onPress={() =>
+                props.onPressPreview({
+                  kind: "image",
+                  name: attachment.name,
+                  uri: imageUri,
+                  gallery: composerImageGallery(props.pendingAttachments),
+                })
+              }
+            >
+              <Image source={{ uri: previewUri }} style={{ width: "100%", aspectRatio: 1.3 }} />
+            </Pressable>
+          ) : (
+            <ThreadMarkdownVideo
+              source={
+                attachment.uploadedAttachmentId
+                  ? attachmentVideoPreviewSource(props.environmentId, {
+                      ...attachment,
+                      id: attachment.uploadedAttachmentId,
+                    })
+                  : {
+                      type: "media",
+                      name: attachment.name,
+                      mimeType: attachment.mimeType,
+                      uri: attachment.fileUri,
+                    }
+              }
+              onPlaybackStart={props.onPlaybackStart}
+              borderRadius={20}
+            />
+          ),
+      };
+    }),
+    ...props.attachments.map((attachment) => ({
+      id: attachment.id,
+      image: isImageAttachment(attachment),
+      content: isImageAttachment(attachment) ? (
+        <MessageAttachmentImage
+          environmentId={props.environmentId}
+          attachmentId={attachment.id}
+          name={attachment.name}
+          mimeType={attachment.mimeType}
+          className={imageClassName}
+          onPressPreview={props.onPressPreview}
+        />
+      ) : isFileAttachment(attachment) ? (
+        <MessageAttachmentFile
+          environmentId={props.environmentId}
+          attachment={attachment}
+          onPressPreview={props.onPressPreview}
+          onPlaybackStart={props.onPlaybackStart}
+          standaloneMedia
+        />
+      ) : null,
+    })),
+  ];
+  const collage = media.length > 1 && media.every((item) => item.image);
+  return collage ? (
+    <View
+      className="overflow-hidden rounded-[20px] bg-border"
+      style={{ gap: StyleSheet.hairlineWidth }}
+    >
+      {media
+        .filter((_, index) => index % 2 === 0)
+        .map((item, index) => (
+          <View key={item.id} className="flex-row" style={{ gap: StyleSheet.hairlineWidth }}>
+            <View className="min-w-0 flex-1">{item.content}</View>
+            {media[index * 2 + 1] ? (
+              <View className="min-w-0 flex-1">{media[index * 2 + 1]!.content}</View>
+            ) : null}
+          </View>
+        ))}
+      <View pointerEvents="none" className="absolute inset-0 rounded-[20px] border border-border" />
+    </View>
+  ) : (
+    <View className="items-end gap-2">
+      {media.map((item) => (
+        <View
+          key={item.id}
+          className="overflow-hidden rounded-[20px]"
+          style={{ width: item.image ? "100%" : 320, maxWidth: "100%" }}
+        >
+          {item.content}
+          <View
+            pointerEvents="none"
+            className="absolute inset-0 rounded-[20px] border border-border"
+          />
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -1593,19 +1734,22 @@ function renderFeedEntry(
             : [],
         ),
       );
+      const standaloneMedia = foldRowId === null && presentation.attribution !== "guest";
+      const mediaAttachments = standaloneMedia ? attachments.filter(isMediaAttachment) : [];
       const visibleAttachments = attachments.filter(
-        (attachment) => isImageAttachment(attachment) || !inlineAttachmentIds.has(attachment.id),
+        (attachment) =>
+          !(standaloneMedia && isMediaAttachment(attachment)) &&
+          (isImageAttachment(attachment) || !inlineAttachmentIds.has(attachment.id)),
       );
-      // Images sent without words show as images, not as a bubble around them.
-      const mediaOnly =
-        foldRowId === null &&
-        presentation.attribution !== "guest" &&
-        presentation.text.trim() === "" &&
-        visibleAttachments.length + (entry.pendingMessage?.attachments.length ?? 0) > 0 &&
-        visibleAttachments.every(isImageAttachment) &&
-        (entry.pendingMessage?.attachments ?? []).every(
-          (attachment) => attachment.type === "image",
-        );
+      const pendingAttachments = entry.pendingMessage?.attachments ?? [];
+      const pendingMedia = standaloneMedia ? pendingAttachments.filter(isMediaAttachment) : [];
+      const pendingBubbleAttachments = standaloneMedia
+        ? pendingAttachments.filter((attachment) => !isMediaAttachment(attachment))
+        : pendingAttachments;
+      const hasBubble =
+        foldRowId !== null ||
+        presentation.text.trim().length > 0 ||
+        visibleAttachments.length + pendingBubbleAttachments.length > 0;
       return (
         <Animated.View
           className="mb-5 items-end"
@@ -1619,136 +1763,141 @@ function renderFeedEntry(
           {presentation.guestName !== undefined ? (
             <GuestMessageName name={presentation.guestName} />
           ) : null}
-          <View
-            className="min-w-0 rounded-[20px]"
-            style={{
-              backgroundColor: mediaOnly ? undefined : userBubbleColor,
-              maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
-              ...(!bubbleBodyVisible
-                ? null
-                : hasReviewCommentContext
-                  ? { width: props.reviewCommentBubbleWidth }
-                  : hasWideBlock || foldExpanded || (mediaOnly && visibleAttachments.length > 0)
-                    ? { width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }
-                    : null),
-            }}
-          >
-            {presentation.attribution === "guest" ? <GuestBubbleTint /> : null}
-            {foldRowId !== null ? (
-              <AgentMessageFoldHeader
+          {mediaAttachments.length + pendingMedia.length > 0 ? (
+            <View
+              className={hasBubble ? "mb-2" : undefined}
+              style={{ width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }}
+            >
+              <UserMessageMedia
+                attachments={mediaAttachments}
+                pendingAttachments={pendingMedia}
                 environmentId={props.environmentId}
-                senderThreadId={message.senderThreadId}
-                summary={
-                  replaceComposerContextReferences(presentation.text, (ref) => ref.label)
-                    .split(/\r?\n/)
-                    .find((line) => line.trim().length > 0)
-                    ?.trim() ?? ""
-                }
-                expanded={foldExpanded}
-                onToggle={() => props.onToggleWorkRow(foldRowId, entry.id)}
-                iconSubtleColor={iconSubtleColor}
+                onPressPreview={props.onPressPreview}
+                onPlaybackStart={props.onPlaybackStart}
               />
-            ) : null}
-            {bubbleBodyVisible ? (
-              <View
-                className={cn(
-                  "gap-2",
-                  !mediaOnly && "px-3.5 pb-2.5",
-                  !mediaOnly && foldRowId === null && "pt-2.5",
-                )}
-              >
-                {entry.pendingMessage?.attachments.map((attachment) =>
-                  attachment.type === "image" && attachment.uploadedAttachmentId ? (
-                    <MessageAttachmentImage
-                      key={attachment.id}
-                      environmentId={props.environmentId}
-                      attachmentId={attachment.uploadedAttachmentId}
-                      name={attachment.name}
-                      mimeType={attachment.mimeType}
-                      className={
-                        mediaOnly
-                          ? "h-[140px] w-[180px] rounded-[20px]"
-                          : "h-[140px] w-[180px] rounded-[14px]"
-                      }
-                      onPressPreview={props.onPressPreview}
-                    />
-                  ) : attachment.type === "image" ? (
-                    <Pressable
-                      key={attachment.id}
-                      accessibilityRole="imagebutton"
-                      accessibilityLabel={`Open ${attachment.name}`}
-                      onPress={() =>
-                        props.onPressPreview({
-                          kind: "image",
-                          name: attachment.name,
-                          uri: attachment.dataUrl ?? attachment.previewUri,
-                          gallery: composerImageGallery(entry.pendingMessage?.attachments ?? []),
-                        })
-                      }
-                    >
-                      <Image
-                        source={{ uri: attachment.previewUri }}
-                        style={{ width: 180, height: 140, borderRadius: mediaOnly ? 20 : 14 }}
+            </View>
+          ) : null}
+          {hasBubble ? (
+            <View
+              className="min-w-0 rounded-[20px]"
+              style={{
+                backgroundColor: userBubbleColor,
+                maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
+                ...(!bubbleBodyVisible
+                  ? null
+                  : hasReviewCommentContext
+                    ? { width: props.reviewCommentBubbleWidth }
+                    : hasWideBlock || foldExpanded
+                      ? { width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }
+                      : null),
+              }}
+            >
+              {presentation.attribution === "guest" ? <GuestBubbleTint /> : null}
+              {foldRowId !== null ? (
+                <AgentMessageFoldHeader
+                  environmentId={props.environmentId}
+                  senderThreadId={message.senderThreadId}
+                  summary={
+                    replaceComposerContextReferences(presentation.text, (ref) => ref.label)
+                      .split(/\r?\n/)
+                      .find((line) => line.trim().length > 0)
+                      ?.trim() ?? ""
+                  }
+                  expanded={foldExpanded}
+                  onToggle={() => props.onToggleWorkRow(foldRowId, entry.id)}
+                  iconSubtleColor={iconSubtleColor}
+                />
+              ) : null}
+              {bubbleBodyVisible ? (
+                <View className={cn("gap-2 px-3.5 pb-2.5", foldRowId === null && "pt-2.5")}>
+                  {pendingBubbleAttachments.map((attachment) =>
+                    attachment.type === "image" && attachment.uploadedAttachmentId ? (
+                      <MessageAttachmentImage
+                        key={attachment.id}
+                        environmentId={props.environmentId}
+                        attachmentId={attachment.uploadedAttachmentId}
+                        name={attachment.name}
+                        mimeType={attachment.mimeType}
+                        className="h-[140px] w-[180px] rounded-[14px]"
+                        onPressPreview={props.onPressPreview}
                       />
-                    </Pressable>
-                  ) : (
-                    <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
-                  ),
-                )}
-                {/* An empty container still takes a gap, which pads every attachment-free bubble. */}
-                {visibleAttachments.length > 0 ? (
-                  <View className={inlineAttachmentIds.size ? "flex-row flex-wrap gap-2" : "gap-2"}>
-                    {visibleAttachments.map((attachment) => {
-                      return isImageAttachment(attachment) ? (
-                        <MessageAttachmentImage
-                          key={attachment.id}
-                          environmentId={props.environmentId}
-                          attachmentId={attachment.id}
-                          name={attachment.name}
-                          mimeType={attachment.mimeType}
-                          className={
-                            inlineAttachmentIds.size
-                              ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
-                              : mediaOnly
-                                ? // Matches the bubble's corners; native borders sit inside, so the edge adds no size.
-                                  "aspect-[1.3] w-full rounded-[20px] border border-border bg-user-bubble-foreground/15"
+                    ) : attachment.type === "image" ? (
+                      <Pressable
+                        key={attachment.id}
+                        accessibilityRole="imagebutton"
+                        accessibilityLabel={`Open ${attachment.name}`}
+                        onPress={() =>
+                          props.onPressPreview({
+                            kind: "image",
+                            name: attachment.name,
+                            uri: attachment.dataUrl ?? attachment.previewUri,
+                            gallery: composerImageGallery(entry.pendingMessage?.attachments ?? []),
+                          })
+                        }
+                      >
+                        <Image
+                          source={{ uri: attachment.previewUri }}
+                          style={{ width: 180, height: 140, borderRadius: 14 }}
+                        />
+                      </Pressable>
+                    ) : (
+                      <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
+                    ),
+                  )}
+                  {/* An empty container still takes a gap, which pads every attachment-free bubble. */}
+                  {visibleAttachments.length > 0 ? (
+                    <View
+                      className={inlineAttachmentIds.size ? "flex-row flex-wrap gap-2" : "gap-2"}
+                    >
+                      {visibleAttachments.map((attachment) => {
+                        return isImageAttachment(attachment) ? (
+                          <MessageAttachmentImage
+                            key={attachment.id}
+                            environmentId={props.environmentId}
+                            attachmentId={attachment.id}
+                            name={attachment.name}
+                            mimeType={attachment.mimeType}
+                            className={
+                              inlineAttachmentIds.size
+                                ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
                                 : "aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
-                          }
-                          onPressPreview={props.onPressPreview}
-                        />
-                      ) : isFileAttachment(attachment) ? (
-                        <MessageAttachmentFile
-                          key={attachment.id}
-                          environmentId={props.environmentId}
-                          attachment={attachment}
-                          onPressPreview={props.onPressPreview}
-                          onPlaybackStart={props.onPlaybackStart}
-                        />
-                      ) : (
-                        <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
-                      );
-                    })}
-                  </View>
-                ) : null}
-                {presentation.text.trim().length > 0 ? (
-                  <MarkdownImageAvailableWidthContext
-                    value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
-                  >
-                    <UserMessageContent
-                      text={renderedText}
-                      environmentId={props.environmentId}
-                      context={message.context}
-                      markdownStyles={styles}
-                      reviewCommentColors={props.reviewCommentColors}
-                      skills={props.skills}
-                      linkHandlers={props.markdownLinkHandlers}
-                      renderImage={props.renderMarkdownImage}
-                    />
-                  </MarkdownImageAvailableWidthContext>
-                ) : null}
-              </View>
-            ) : null}
-          </View>
+                            }
+                            onPressPreview={props.onPressPreview}
+                          />
+                        ) : isFileAttachment(attachment) ? (
+                          <MessageAttachmentFile
+                            key={attachment.id}
+                            environmentId={props.environmentId}
+                            attachment={attachment}
+                            onPressPreview={props.onPressPreview}
+                            onPlaybackStart={props.onPlaybackStart}
+                          />
+                        ) : (
+                          <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                  {presentation.text.trim().length > 0 ? (
+                    <MarkdownImageAvailableWidthContext
+                      value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
+                    >
+                      <UserMessageContent
+                        text={renderedText}
+                        environmentId={props.environmentId}
+                        context={message.context}
+                        markdownStyles={styles}
+                        reviewCommentColors={props.reviewCommentColors}
+                        skills={props.skills}
+                        linkHandlers={props.markdownLinkHandlers}
+                        renderImage={props.renderMarkdownImage}
+                      />
+                    </MarkdownImageAvailableWidthContext>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
           {bubbleBodyVisible ? (
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
               {foldRowId !== null && message.senderThreadId ? (
