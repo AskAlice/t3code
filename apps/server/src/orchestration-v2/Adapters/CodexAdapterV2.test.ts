@@ -1907,7 +1907,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             modelSelection: CODEX_TEST_MODEL_SELECTION,
             hasT3Mcp: true,
           });
-          const { additionalContext: _context, ...paramsWithoutContext } = params;
           assert.include(
             params.additionalContext?.t3_code_orchestration_01?.value ?? "",
             "delegate_task",
@@ -1969,11 +1968,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     {
                       type: "expect_outbound" as const,
                       label: "next turn",
-                      frame: {
-                        id: 4,
-                        method: "turn/start",
-                        params: paramsWithoutContext,
-                      },
+                      frame: { id: 4, method: "turn/start", params },
                     },
                     {
                       type: "emit_inbound" as const,
@@ -2550,7 +2545,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("republishes a T3 context digest the stored provider thread lost", () =>
+  it.effect("keeps sending live Codex its T3 context and republishes a lost digest", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "lost-digest-context-thread";
@@ -2589,7 +2584,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             },
           ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>;
-        const { additionalContext: _unchanged, ...secondWithoutContext } = yield* params("second");
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario: "lost-digest-context",
@@ -2600,7 +2594,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 prompt: "unused-prompt",
               }).slice(0, 5),
               ...completed(3, "turn-first", yield* params("first")),
-              ...completed(4, "turn-second", secondWithoutContext),
+              // Omitting context would empty Codex's map, so a later change would repeat every entry.
+              ...completed(4, "turn-second", yield* params("second")),
             ],
           }),
         );

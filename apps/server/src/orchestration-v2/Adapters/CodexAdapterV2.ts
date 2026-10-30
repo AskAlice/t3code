@@ -1678,6 +1678,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         // Absent: fall back to persisted metadata. Undefined: Codex holds no known context.
         const deliveredContextDigests = new Map<string, string | undefined>();
+        // Codex dedupes against its in-memory map, which a turn without additionalContext empties.
+        const contextStoreDigests = new Map<string, string>();
         // Recorded once Codex accepts the turn, before its turn/started can lead to a terminal.
         const pendingContextDigests = new Map<string, string | undefined>();
         // Codex drops client developer messages during compaction but only
@@ -6603,13 +6605,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const deliveredDigest = deliveredContextDigests.has(threadId)
               ? deliveredContextDigests.get(threadId)
               : turnInput.providerThread.nativeMetadata?.codexAdditionalContextDigest;
+            // Omit only when history holds the context but this app-server's map does not.
+            const omitContext =
+              contextDigest !== undefined &&
+              contextDigest === deliveredDigest &&
+              contextStoreDigests.get(threadId) !== contextDigest;
             pendingContextDigests.set(threadId, contextDigest ?? deliveredDigest);
             const started = yield* client.request(
               "turn/start",
-              contextDigest !== undefined && contextDigest === deliveredDigest
-                ? paramsWithoutContext
-                : turnStartParams,
+              omitContext ? paramsWithoutContext : turnStartParams,
             );
+            if (omitContext || contextDigest === undefined) contextStoreDigests.delete(threadId);
+            else contextStoreDigests.set(threadId, contextDigest);
             // A turn/started notification may have registered and completed this turn already.
             if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput) return;
             yield* recordPendingContextDigest(threadId, turnInput.providerThread);
