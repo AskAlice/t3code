@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceEnvironmentVariableName } from "./providerInstance.ts";
@@ -34,7 +35,7 @@ export type ManagedProviderInstance = typeof ManagedProviderInstance.Type;
 
 export const ManagedProviderLimits = Schema.Struct({
   /** Only these drivers run; instances of any other driver show as unavailable. */
-  allowedDrivers: Schema.optionalKey(Schema.Array(ProviderDriverKind)),
+  allowedDrivers: Schema.optionalKey(Schema.NonEmptyArray(ProviderDriverKind)),
   instances: Schema.optionalKey(Schema.Record(ProviderDriverKind, ManagedProviderInstance)),
 });
 export type ManagedProviderLimits = typeof ManagedProviderLimits.Type;
@@ -97,7 +98,7 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
   providers: Schema.optionalKey(
     Schema.Struct({
       /** Absent means every driver is allowed. */
-      allowedDrivers: Schema.optionalKey(Schema.Array(ProviderDriverKind)),
+      allowedDrivers: Schema.optionalKey(Schema.NonEmptyArray(ProviderDriverKind)),
       /**
        * Per driver, the instance fields users cannot change, as dot paths into the instance
        * envelope: `config.binaryPath`, `config.launchArgs`, `environment.<NAME>`. A bare
@@ -109,7 +110,8 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
       ),
     }),
   ),
-  updates: Schema.optionalKey(ManagedUpdatesPolicy),
+  /** No `feedUrl`: it can carry a token, and only the desktop app, which reads the file, uses it. */
+  updates: Schema.optionalKey(ManagedUpdatesPolicy.mapFields(Struct.omit(["feedUrl"]))),
 });
 export type ManagedPolicySummaryLimits = typeof ManagedPolicySummaryLimits.Type;
 
@@ -181,6 +183,20 @@ export function managedRuntimeModeDenial(
   return summary !== undefined && ceiling !== undefined && isRuntimeModeAbove(mode, ceiling)
     ? managedRuntimeModeCeilingMessage(summary.organization, ceiling)
     : undefined;
+}
+
+/**
+ * `mode` when the policy allows it, else the broadest of `modes` (narrowest first) that it does:
+ * where a thread or task above the ceiling switches down to. Undefined when none is allowed.
+ */
+export function clampManagedRuntimeMode(
+  summary: ManagedPolicySummary | undefined,
+  mode: RuntimeMode,
+  modes: ReadonlyArray<RuntimeMode> = RuntimeMode.literals,
+): RuntimeMode | undefined {
+  const ceiling = summary?.limits?.maxRuntimeMode;
+  if (!isRuntimeModeAbove(mode, ceiling)) return mode;
+  return modes.findLast((candidate) => !isRuntimeModeAbove(candidate, ceiling));
 }
 
 const CAPABILITY_LABELS = {

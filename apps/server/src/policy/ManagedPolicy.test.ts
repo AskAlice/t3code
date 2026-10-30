@@ -229,6 +229,8 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
           withProviders({
             instances: { codex: { locked: true, environment: [{ name: "1BAD", value: "" }] } },
           }),
+          // No provider could run at all.
+          withProviders({ allowedDrivers: [] }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -236,7 +238,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 5);
+      assert.lengthOf(reasons, 6);
       assert.include(reasons[0], "notAProvider");
       assert.include(reasons[1], "notAProvider");
       assert.include(reasons[2], "launchArgs");
