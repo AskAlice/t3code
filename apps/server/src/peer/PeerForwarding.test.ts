@@ -686,3 +686,32 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it.effect("refuses a launch there above the link's access, naming the link", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const linkSession = yield* Ref.make("");
+      const b = yield* serveBox(seen, linkSession);
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "auto");
+      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+
+      // A full-access agent here asks for more than the link allows there.
+      const refused = yield* a.call("thread:laptop-full", "t3_thread_launch", {
+        environmentId: box.environmentId,
+        projectId: boxProject,
+        title: "Run the suite there",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        message: "Run the suite.",
+        runtimeMode: "full-access",
+      });
+      const { message } = failureOf(refused);
+      expect(message).toContain('"Box"');
+      expect(message).toContain("auto");
+      expect(message).toContain("full-access");
+      expect(message).not.toContain("parent mode");
+      expect((yield* Ref.get(seen)).launches).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
