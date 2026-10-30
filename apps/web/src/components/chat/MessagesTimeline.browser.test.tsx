@@ -642,6 +642,35 @@ describe("MessagesTimeline agent messages", () => {
 });
 
 describe("MessagesTimeline attachments", () => {
+  it("shows the local video source while its attachment is sending", async () => {
+    using _observer = stubGlobal(
+      "IntersectionObserver",
+      class extends IntersectionObserver {
+        override observe() {}
+      },
+    );
+    await using screen = await renderTimeline([
+      message("", {
+        attachments: [
+          {
+            type: "file",
+            id: "pending-video",
+            name: "clip.mp4",
+            mimeType: "video/mp4",
+            sizeBytes: 100,
+            downloadable: false,
+            previewUrl: "data:video/mp4;base64,",
+          },
+        ],
+      }),
+    ]);
+    await vi.waitFor(() => {
+      expect(screen.container.querySelector("video")?.getAttribute("src")).toBe(
+        "data:video/mp4;base64,",
+      );
+    });
+  });
+
   it.each(["loadedmetadata", "loadeddata", "canplay"])(
     "plays audio with unknown duration after %s and updates the total later",
     async (readyEvent) => {

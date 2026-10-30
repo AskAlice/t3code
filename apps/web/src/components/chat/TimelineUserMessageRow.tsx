@@ -110,8 +110,14 @@ function UserFileCard({
           {label}
         </span>
         <span className="block text-xs text-muted-foreground tabular-nums">
-          {!pastedText && `${extension} · `}
-          {formatBytes(file.sizeBytes)}
+          {file.downloadable === false ? (
+            "Sending…"
+          ) : (
+            <>
+              {!pastedText && `${extension} · `}
+              {formatBytes(file.sizeBytes)}
+            </>
+          )}
         </span>
       </span>
     </>
@@ -122,7 +128,12 @@ function UserFileCard({
       className="flex w-64 max-w-full items-center gap-1 rounded-2xl bg-message py-2 ps-2 pe-1 text-message-foreground"
     >
       {file.downloadable === false ? (
-        <div className="flex min-w-0 flex-1 items-center gap-3">{identity}</div>
+        <>
+          <div className="flex min-w-0 flex-1 items-center gap-3">{identity}</div>
+          <Button size="icon-xs" variant="ghost-muted" disabled aria-label="Sending attachment">
+            <DownloadIcon />
+          </Button>
+        </>
       ) : (
         <>
           <button
@@ -883,9 +894,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate">{label}</span>
-                          {pastedText ? (
+                          {file.downloadable === false || pastedText ? (
                             <span className="block text-xs text-muted-foreground tabular-nums">
-                              {formatBytes(file.sizeBytes)}
+                              {file.downloadable === false
+                                ? "Sending…"
+                                : formatBytes(file.sizeBytes)}
                             </span>
                           ) : null}
                         </span>
