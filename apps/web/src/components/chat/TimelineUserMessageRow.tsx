@@ -83,7 +83,10 @@ import {
   TimelineRowTimestamp,
 } from "./TimelineRowParts";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
-import { resolvePreviewAnnotationImage } from "./TimelineUserMessageRow.logic";
+import {
+  resolvePreviewAnnotationImage,
+  userMessageFileLabel,
+} from "./TimelineUserMessageRow.logic";
 
 // Drawn inside the media so dark screenshots keep an edge on the dark background.
 const MEDIA_EDGE_CLASS_NAME =
@@ -101,7 +104,7 @@ function UserFileCard({
 }) {
   const ctx = use(TimelineRowCtx);
   const pastedText = file.source?._tag === "pasted-text";
-  const label = pastedText ? "Pasted text" : file.name;
+  const label = userMessageFileLabel(file);
   const extension = /\.([a-z0-9]{1,8})$/i.exec(file.name)?.[1]?.toUpperCase() ?? "File";
   const identity = (
     <>
@@ -524,8 +527,19 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       .split(/\r?\n/)
       .find((line) => line.trim().length > 0)
       ?.trim() ?? "";
+  const mediaCopyRecords = mediaOnly
+    ? resolvedContext.records.flatMap((record) => {
+        const known = asKnownContextRecord(record);
+        return (known?.kind === "image" || known?.kind === "file") &&
+          (regularImages.some((image) => image.id === known.attachmentId) ||
+            userVideos.some((file) => file.id === known.attachmentId))
+          ? [known]
+          : [];
+      })
+    : [];
+  const copyRecords = mediaOnly ? mediaCopyRecords : resolvedContext.records;
   const contextClipboardFragment =
-    resolvedContext.records.length === 0
+    copyRecords.length === 0
       ? null
       : encodeComposerContextFragment({
           version: 1,
@@ -534,22 +548,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ...(ctx.threadRef ? { threadId: ctx.threadRef.threadId } : {}),
             messageId: row.message.id,
           },
-          records: resolvedContext.records,
+          records: copyRecords,
         });
   const copyText =
-    resolvedContext.text ||
-    (mediaOnly && contextClipboardFragment
-      ? resolvedContext.records
-          .flatMap((record) => {
-            const known = asKnownContextRecord(record);
-            return (known?.kind === "image" || known?.kind === "file") &&
-              (regularImages.some((image) => image.id === known.attachmentId) ||
-                userVideos.some((file) => file.id === known.attachmentId))
-              ? [formatComposerContextReference(known)]
-              : [];
-          })
-          .join("\n")
-      : "");
+    resolvedContext.text || mediaCopyRecords.map(formatComposerContextReference).join("\n");
   const onBodyCopyCapture = (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (resolvedContext.records.length === 0 || !event.clipboardData) return;
     const selection = window.getSelection();
@@ -660,7 +662,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 ? cn(
                     "col-span-2",
                     standaloneMedia
-                      ? cn(MEDIA_EDGE_CLASS_NAME, "justify-self-end overflow-hidden rounded-2xl")
+                      ? cn(
+                          MEDIA_EDGE_CLASS_NAME,
+                          "min-h-16 justify-self-end overflow-hidden rounded-2xl",
+                        )
                       : SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
                   )
                 : loneImage
@@ -901,7 +906,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 <div className="mb-2 flex flex-col gap-1">
                   {unchippedFiles.map((file) => {
                     const pastedText = file.source?._tag === "pasted-text";
-                    const label = pastedText ? "Pasted text" : file.name;
+                    const label = userMessageFileLabel(file);
                     const fileIdentity = (
                       <>
                         <PierreEntryIcon

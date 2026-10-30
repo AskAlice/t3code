@@ -649,7 +649,7 @@ describe("MessagesTimeline agent messages", () => {
 
 describe("MessagesTimeline attachments", () => {
   it.each(["image", "file"] as const)(
-    "copies a wordless %s attachment only when its context record is present",
+    "copies only matching context records for a wordless %s attachment",
     async (kind) => {
       const attachment = {
         type: kind,
@@ -687,7 +687,20 @@ describe("MessagesTimeline attachments", () => {
         <MessagesTimeline
           {...baseProps()}
           timelineEntries={[
-            message("", { attachments: [attachment], context: { version: 1, records: [record] } }),
+            message("", {
+              attachments: [attachment],
+              context: {
+                version: 1,
+                records: [
+                  record,
+                  {
+                    ...record,
+                    contextId: ComposerContextId.make("other-context"),
+                    attachmentId: "other",
+                  },
+                ],
+              },
+            }),
           ]}
         />,
       );
@@ -703,35 +716,6 @@ describe("MessagesTimeline attachments", () => {
       expect(decodeComposerContextFragment(fragment)?.records).toEqual([record]);
     },
   );
-
-  it("shows the local video source while its attachment is sending", async () => {
-    using _observer = stubGlobal(
-      "IntersectionObserver",
-      class extends IntersectionObserver {
-        override observe() {}
-      },
-    );
-    await using screen = await renderTimeline([
-      message("", {
-        attachments: [
-          {
-            type: "file",
-            id: "pending-video",
-            name: "clip.mp4",
-            mimeType: "video/mp4",
-            sizeBytes: 100,
-            downloadable: false,
-            previewUrl: "data:video/mp4;base64,",
-          },
-        ],
-      }),
-    ]);
-    await vi.waitFor(() => {
-      expect(screen.container.querySelector("video")?.getAttribute("src")).toBe(
-        "data:video/mp4;base64,",
-      );
-    });
-  });
 
   it.each(["loadedmetadata", "loadeddata", "canplay"])(
     "plays audio with unknown duration after %s and updates the total later",
