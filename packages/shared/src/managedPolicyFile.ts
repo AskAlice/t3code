@@ -115,6 +115,15 @@ const decodeForcedExit = Schema.decodeUnknownExit(
   { onExcessProperty: "error" },
 );
 
+// macOS writes `PayloadUUID` and `_manualProfile` beside the profile's own keys; no policy key
+// starts with `Payload` or `_`, so dropping them cannot hide a restriction.
+const withoutProfileKeys = (value: unknown) =>
+  value === null || typeof value !== "object" || Array.isArray(value)
+    ? value
+    : Object.fromEntries(
+        Object.entries(value).filter(([key]) => !key.startsWith("Payload") && !key.startsWith("_")),
+      );
+
 /**
  * Installed managed preferences hold the profile's keys directly, but MCX-style profiles keep
  * them under `Forced[0].mcx_preference_settings`; read either rather than refuse a valid profile.
@@ -122,8 +131,11 @@ const decodeForcedExit = Schema.decodeUnknownExit(
 function unwrapForced(json: string): unknown {
   const parsed = decodeJsonExit(json);
   if (Exit.isFailure(parsed)) return json;
-  const forced = decodeForcedExit(parsed.value);
-  return Exit.isSuccess(forced) ? forced.value.Forced[0].mcx_preference_settings : parsed.value;
+  const preferences = withoutProfileKeys(parsed.value);
+  const forced = decodeForcedExit(preferences);
+  return Exit.isSuccess(forced)
+    ? withoutProfileKeys(forced.value.Forced[0].mcx_preference_settings)
+    : preferences;
 }
 
 /** Read the policy a configuration profile or Group Policy set; absent means no such policy. */
