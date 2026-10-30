@@ -3961,6 +3961,8 @@ interface ActiveClaudeSubagent {
   // Older Claude Code also forwards thinking in SDK frames, under the transcript line's uuid.
   readonly shownThinkingIds: Set<string>;
   transcriptTurnEnded: boolean;
+  // Its file never appeared within a flush window; later frames read it but do not wait.
+  transcriptMissing: boolean;
 }
 
 interface ClaudeLiveQueryContext {
@@ -4582,7 +4584,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ? undefined
             : path.resolve(session.cwd, adapterOptions.environment.CLAUDE_CONFIG_DIR);
         // Native subagent transcript directories, by native session id.
-        const nativeSubagentTranscriptDirs = new Map<string, string>();
+        const nativeSubagentTranscriptDirs = new Map<string, string | null>();
         // Waits for the tail's last read so its output lands before the call settles.
         const stopTaskOutputTail = (toolUseId: string) =>
           Effect.suspend(() => {
@@ -5717,6 +5719,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             transcriptBacklog: [],
             shownThinkingIds: new Set(),
             transcriptTurnEnded: false,
+            transcriptMissing: false,
           };
           yield* Ref.update(sessionSubagentsByTaskId, (current) =>
             new Map(current).set(resume.taskId, subagent),
@@ -6359,6 +6362,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             shownThinkingIds: existingSubagent?.shownThinkingIds ?? new Set(),
             transcriptTurnEnded:
               input.reopen !== true && existingSubagent?.transcriptTurnEnded === true,
+            transcriptMissing: existingSubagent?.transcriptMissing ?? false,
           } satisfies ActiveClaudeSubagent;
           // Ingestion can terminalize after lookup; reopen only that generation to preserve newer results.
           const accepted = yield* Ref.modify(sessionSubagentsByTaskId, (current) => {
@@ -6984,6 +6988,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           nativeThreadId: string,
         ) {
           let transcriptDir = nativeSubagentTranscriptDirs.get(nativeThreadId);
+          if (transcriptDir === null) return false;
           if (transcriptDir === undefined) {
             const projectsDir = path.join(
               claudeConfigDirOverride ?? path.join(yield* HostProcess.HomeDirectory, ".claude"),
@@ -7004,7 +7009,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 break;
               }
             }
-            if (transcriptDir === undefined) return false;
+            if (transcriptDir === undefined) {
+              nativeSubagentTranscriptDirs.set(nativeThreadId, null);
+              return false;
+            }
           }
           let drained = false;
           while (!drained) {
@@ -7017,7 +7025,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : { configDir: claudeConfigDirOverride }),
             }).pipe(Effect.option);
             // Claude creates the subagent's file after task_started.
-            if (Option.isNone(read)) return true;
+            if (Option.isNone(read)) return !subagent.transcriptMissing;
             const advanced = read.value.cursor.offset !== subagent.transcriptCursor.offset;
             subagent.transcriptCursor = read.value.cursor;
             for (const line of read.value.lines) {
@@ -7064,6 +7072,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               yield* readNativeSubagentTranscript(subagent, input.taskId, input.nativeThreadId);
               through = input.through(subagent.transcriptBacklog);
             }
+            if (subagent.transcriptCursor.identity === null) subagent.transcriptMissing = true;
           }
           // Lines read before an unseen frame's line was flushed all precede it.
           const target = subagentProjectionTarget(subagent);

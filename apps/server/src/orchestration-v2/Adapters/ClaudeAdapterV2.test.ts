@@ -11765,6 +11765,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #27116 a subagent whose transcript never appears holds only its first frame
+  it.effect("holds only the first frame of a native subagent without a transcript", () =>
+    withNativeTranscriptHarness("a27116absent", ({ harness, polls }) =>
+      Effect.gen(function* () {
+        const AGENT = "toolu-absent-agent";
+        yield* harness.offerAndWait(nativeTaskStarted("a27116absent", AGENT));
+        let polled = 0;
+        const advance = yield* Stream.fromQueue(polls).pipe(
+          Stream.runForEach(() =>
+            Effect.sync(() => polled++).pipe(Effect.andThen(TestClock.adjust(25))),
+          ),
+          Effect.forkScoped,
+        );
+        yield* harness.offerAndWait(nativeToolFrame(AGENT, "tool-1", "toolu-f1"));
+        const firstFramePolls = polled;
+        yield* harness.offerAndWait(nativeToolFrame(AGENT, "tool-2", "toolu-f2"));
+        yield* Fiber.interrupt(advance);
+        assert.deepEqual([firstFramePolls, polled], [20, 20]);
+        assert.deepEqual(
+          yield* untilChildItems(harness, harness.until, "command_execution toolu-f2"),
+          ["user_message", "command_execution toolu-f1", "command_execution toolu-f2"],
+        );
+      }),
+    ),
+  );
+
   // regression: #27116 a stopped subagent never ends its transcript turn; settling must not wait for it
   it.effect("settles a stopped native subagent without waiting for its transcript", () =>
     withNativeTranscriptHarness("a27116stopped", ({ harness, append }) =>
