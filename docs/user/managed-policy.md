@@ -20,7 +20,8 @@ Deploy the policy one way per machine:
   the payload from a policy file you checked, run
   `plutil -convert xml1 -o com.t3tools.t3code.plist policy.json` and upload the result.
 - **Windows registry:** set `Policy` (`REG_SZ`) to the whole policy as one line of JSON, from
-  Group Policy Preferences or an Intune script. In PowerShell, as an administrator:
+  Group Policy Preferences or an Intune script. T3 Code reads it with `reg.exe`; where registry
+  tools are blocked for users, deploy the file instead. In PowerShell, as an administrator:
 
   ```powershell
   $json = (Get-Content -Raw -Encoding UTF8 policy.json) -replace '\r?\n\s*', ''
@@ -57,6 +58,10 @@ Each key under `settings` names a server setting by its path in the server's `se
 - `"locked": false` sets the default. Users start there and can change it.
 - `"locked": true` sets the value and stops users and agents from changing it, including in
   per-project settings. Settings shows the control as **Managed by** your organization.
+
+Some settings are overridden by another when both are set. Lock `idleCompaction` along with the
+older `compactIdleThreads`, and lock `worktreeCleanup`, which projects can also set, along with the
+`worktree` rules in `storageCleanup`. T3 Code refuses a policy that locks only the first.
 
 A default changes an existing setting but cannot add an entry, such as a provider instance, because
 users could never remove it. Lock the entry, or set provider fields with
@@ -111,7 +116,8 @@ approvals. Pin any variables your users need, such as a gateway URL, in `provide
 Variables in the environment that starts T3 Code itself still reach providers.
 
 ACP agents' own mode menus have no effect under `maxRuntimeMode`, except Antigravity's, whose modes
-T3 Code can place under the limit.
+T3 Code can place under the limit. Users still choose which ACP Registry agent runs; leave
+`acpRegistry` out of `allowedDrivers` to stop that.
 
 Providers still read their own configuration from the user's home directory, for example
 `~/.claude` and `~/.codex`. Restrict those with each provider's managed configuration; see
@@ -119,24 +125,26 @@ Providers still read their own configuration from the user's home directory, for
 
 ### Clients and T3 Connect
 
-`clients` lists what may connect to the server:
+`clients` lists how the server may run:
 
-- `desktop`: the desktop app on this machine.
-- `local-browser`: a browser on this machine.
-- `remote`: phones, other computers, app.t3.codes, and anything reached over the network.
+- `desktop`: as the desktop app's own server.
+- `local-browser`: as a server only browsers on this machine reach, such as `npx t3`.
+- `remote`: reachable from phones, other computers, and app.t3.codes over the network.
+
+`remote` is the line that matters. A server reachable from the network also accepts browsers on
+this machine, and the two local kinds differ only in how T3 Code was started. On machines with the
+desktop app, keep `desktop` in the list, or the app cannot start.
 
 Without `remote`, the server only listens on this machine, does not create pairing links, and
 signs out devices that paired earlier. The desktop app starts with network access and Tailscale
-Serve off, whatever the user chose. T3 Connect is a way for remote clients to reach the machine, so
-it turns off too. To keep remote access but turn off only T3 Connect, set `"connect": false`.
-
-A server that accepts `remote` clients listens on the network, so browsers on this machine can
-reach it too.
+Serve off, whatever the user chose, and the server turns off Tailscale Serve that forwards to it.
+T3 Connect is a way for remote clients to reach the machine, so it turns off too. To keep remote
+access but turn off only T3 Connect, set `"connect": false`.
 
 ### Other capabilities
 
 - `webhookTasks: false`: scheduled tasks cannot use webhook triggers. Existing webhook tasks are
-  kept but do not run.
+  kept but do not run, and cannot be turned back on; users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
 - `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
@@ -188,3 +196,6 @@ remove the policy.
 T3 Code enforces the policy itself. A version from before managed policy, or a build a user
 changed, ignores it. To control which builds can run, use your device management tool's
 application controls.
+
+Without `remote`, T3 Code does not expose the server, but a user can still forward its local port
+with other tools.
