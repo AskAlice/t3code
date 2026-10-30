@@ -515,7 +515,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
 
-    it.effect("leaves out commits still on a branch the turn switched away from", () =>
+    it.effect("leaves out commits of a branch the turn switched away from", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -552,13 +552,14 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           cwd: tmp,
           checkpointRef: switchRefs.toCheckpointRef,
         });
-        expect([...((yield* checkpointStore.listAuthoredPaths(switchRefs)) ?? [])]).toEqual([]);
+        expect(yield* checkpointStore.listAuthoredPaths(switchRefs)).toEqual(new Set());
 
         yield* git(tmp, ["checkout", "a"]);
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: discardRefs.fromCheckpointRef,
         });
+        yield* git(tmp, ["branch", "backup"]);
         yield* git(tmp, ["reset", "--hard", "HEAD~1"]);
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
