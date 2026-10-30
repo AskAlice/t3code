@@ -1,6 +1,7 @@
 import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
@@ -142,28 +143,36 @@ it.effect(
       assert.deepEqual(offCalls, [["serve", "--https=443", "off"]]);
       const stuck = yield* close({ offExitCode: 1 }).pipe(Effect.flip);
       assert.include(stuck.message, "Tailscale Serve on port 443");
-      // An answer that cannot be read might hide a mapping, so the server waits.
+      // An answer that cannot be read might hide a mapping, so the server does not start.
+      const dialFailure = (reason: string) =>
+        `Failed to connect to local Tailscale daemon for /localapi/v0/serve-config; not running? Error: dial unix /var/run/tailscale/tailscaled.sock: connect: ${reason}`;
       for (const status of [
         { stdout: "", exitCode: 1, stderr: "something unexpected" },
         { stdout: "not json", exitCode: 0 },
+        { stdout: "", exitCode: 1, stderr: "Access denied: serve config denied" },
+        { stdout: "", exitCode: 1, stderr: dialFailure("permission denied") },
       ]) {
         const unread = yield* close({ status }).pipe(Effect.flip);
         assert.include(unread.message, "does not start until Tailscale Serve can be checked");
       }
-      // Tailscale down, or not installed, forwards nothing now.
-      yield* close({
-        status: {
-          stdout: "",
-          exitCode: 1,
-          stderr: "failed to connect to local tailscaled; it doesn't appear to be running",
-        },
-      });
-      yield* ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
-        Effect.provideService(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make(() => Effect.die("tailscale is not installed")),
-        ),
-      );
+      // Tailscale down, logged out, or not installed forwards nothing now.
+      for (const stderr of [dialFailure("connection refused"), "NeedsLogin: not logged in"]) {
+        yield* close({ status: { stdout: "", exitCode: 1, stderr } });
+      }
+      const spawnFailing = (tag: "NotFound" | "PermissionDenied") =>
+        ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.fail(
+                PlatformError.systemError({ _tag: tag, module: "ChildProcess", method: "spawn" }),
+              ),
+            ),
+          ),
+        );
+      yield* spawnFailing("NotFound");
+      // A CLI that is there but will not run might still front a daemon with a mapping.
+      yield* spawnFailing("PermissionDenied").pipe(Effect.flip);
     });
   },
 );

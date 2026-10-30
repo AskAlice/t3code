@@ -15,6 +15,7 @@ import {
   type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 type PolicyDocument = { readonly document: ManagedPolicyDocument | undefined };
@@ -76,18 +77,17 @@ const refuse = (policy: PolicyDocument, action: string, detail?: string) =>
 
 export const refuseConnect = (policy: PolicyDocument) => refuse(policy, "T3 Connect");
 
-/** Tailscale answers that leave nothing T3 Code made forwarding here right now. */
+/** Tailscale answers that leave nothing forwarding here right now. */
 const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new Set([
   "not-running",
   "not-logged-in",
-  // T3 Code makes mappings with this same CLI, so one it may not read, it could not have made.
-  "permission-denied",
 ]);
 
 /**
  * Turns off Tailscale Serve that forwards to `port`, such as one `t3 pair --tailscale` left from
  * before the policy. Runs before the server binds, and fails when such a mapping stays on or
- * Tailscale's answer cannot be read. Without the CLI, or with Tailscale down, nothing is closed.
+ * Tailscale's answer cannot be read. Without the CLI, or with Tailscale down or logged out,
+ * nothing forwards, so nothing is closed.
  */
 export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServeTo")(function* (
   policy: PolicyDocument,
@@ -96,7 +96,11 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
   if (allowsRemoteClients(policy)) return;
   const servePorts = yield* readTailscaleServePortsProxyingTo(port).pipe(
     Effect.catchTags({
-      TailscaleCommandSpawnError: () => Effect.succeed([]),
+      // Only a CLI that is not there; one that will not run might still front a daemon.
+      TailscaleCommandSpawnError: (error) =>
+        PlatformError.isPlatformError(error.cause) && error.cause.reason._tag === "NotFound"
+          ? Effect.succeed([])
+          : Effect.fail(error),
       TailscaleCommandExitError: (error) =>
         NOTHING_TO_CLOSE.has(error.stderrDiagnostic) ? Effect.succeed([]) : Effect.fail(error),
     }),

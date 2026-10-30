@@ -143,8 +143,9 @@ it turns off too. To keep remote access but turn off only T3 Connect, set `"conn
 
 When it starts, the server also turns off Tailscale Serve HTTPS forwarding to its port, such as one
 `t3 pair --tailscale` set up. It does not start while that forwarding stays on, or while
-Tailscale's answer cannot be read. If Tailscale is not running then, a mapping it keeps returns
-when Tailscale starts; restart T3 Code to turn it off.
+Tailscale's answer cannot be read. It does start when Tailscale is not installed, not running, or
+logged out, since nothing forwards then; a mapping Tailscale kept returns when Tailscale runs
+again, so restart T3 Code after that.
 
 ### Other capabilities
 
