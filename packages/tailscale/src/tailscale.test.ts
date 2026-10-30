@@ -105,6 +105,15 @@ describe("tailscale", () => {
       },
     });
     assert.deepEqual(parseTailscaleServePortsProxyingTo(status, 3773), [443, 9443]);
+    assert.deepEqual(
+      parseTailscaleServePortsProxyingTo(
+        JSON.stringify({
+          Web: { "box:443": { Handlers: { "/": { Proxy: "http://127.0.0.1" } } } },
+        }),
+        80,
+      ),
+      [443],
+    );
     assert.deepEqual(parseTailscaleServePortsProxyingTo("{}", 3773), []);
     assert.deepEqual(parseTailscaleServePortsProxyingTo("not json", 3773), []);
   });

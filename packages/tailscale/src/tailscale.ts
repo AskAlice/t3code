@@ -478,7 +478,8 @@ export const parseTailscaleServePortsProxyingTo = (
     const proxiesHere = Object.values(site.Handlers ?? {}).some((handler) => {
       if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return false;
       const target = new URL(handler.Proxy);
-      return LOOPBACK_SERVE_HOSTS.has(target.hostname) && target.port === String(localPort);
+      const port = target.port || (target.protocol === "https:" ? "443" : "80");
+      return LOOPBACK_SERVE_HOSTS.has(target.hostname) && port === String(localPort);
     });
     return proxiesHere && Number.isInteger(servePort) ? [servePort] : [];
   });
