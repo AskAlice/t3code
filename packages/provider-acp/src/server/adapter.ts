@@ -6275,6 +6275,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }).pipe(holdingAgentRequest(handlerGeneration)),
           );
           if (flavor.registerExtensions !== undefined) {
+            let emittedAssistantTexts = 0;
             yield* flavor.registerExtensions({
               runtime: targetRuntime,
               reportProviderRetry: (notice) =>
@@ -6299,13 +6300,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.gen(function* () {
                     if (yield* Ref.get(stoppedRunQuarantine)) return;
                     if ((yield* Ref.get(activeSessionId)) !== sessionId) return;
-                    yield* projectAcpRuntimeSessionUpdateEffect({
+                    emittedAssistantTexts += 1;
+                    // Its own message id keeps it out of a progress message left open across tools.
+                    yield* handleSessionUpdate({
                       sessionId,
                       update: {
                         sessionUpdate: "agent_message_chunk",
+                        messageId: `t3-emitted:${handlerGeneration}:${emittedAssistantTexts}`,
                         content: { type: "text", text },
                       },
-                    });
+                    }).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new EffectAcpErrors.AcpTransportError({
+                            detail: "Failed to project agent-reported assistant text",
+                            cause,
+                          }),
+                      ),
+                    );
                   }),
                 ).pipe(Effect.asVoid),
               applyBackgroundTaskMutation: (incoming) =>

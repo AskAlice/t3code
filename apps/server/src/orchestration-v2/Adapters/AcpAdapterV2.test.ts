@@ -2095,7 +2095,7 @@ describe("AcpAdapterV2", () => {
       const routing = makeCopilotSubagentRouting();
       const instanceId = ProviderInstanceId.make("copilot-task-complete");
       const note = "Checking the build scripts.";
-      const summary = "The build passes; `vp run build` now emits the CLI bundle.";
+      const summary = "    vp run build\n\nThe build passes and emits the CLI bundle.\n";
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
@@ -2134,6 +2134,7 @@ describe("AcpAdapterV2", () => {
                   });
                   yield* update({
                     sessionUpdate: "agent_message_chunk",
+                    messageId: "progress-1",
                     content: { type: "text", text: note },
                   });
                   yield* update({
@@ -2158,6 +2159,12 @@ describe("AcpAdapterV2", () => {
                   ]) {
                     yield* sessionEvent!({ sessionId, type: "session.task_complete", data });
                   }
+                  yield* sessionEvent!({
+                    sessionId,
+                    type: "session.task_complete",
+                    agentId: "explore-1",
+                    data: { summary: "Subagent finished.", outcome: "completed" },
+                  });
                   yield* sessionEvent!({
                     sessionId,
                     type: "session.task_complete",

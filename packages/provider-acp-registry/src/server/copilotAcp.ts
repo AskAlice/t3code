@@ -101,8 +101,8 @@ export function makeCopilotSubagentRouting() {
         case "session.task_complete": {
           // In Autopilot, task_complete's summary is the turn's answer; "continue" and "blocked" are reviewer verdicts.
           const outcome = data.outcome ?? (data.success !== false ? "completed" : undefined);
-          const summary = typeof data.summary === "string" ? data.summary.trim() : "";
-          if (event.agentId !== undefined || outcome !== "completed" || summary === "") {
+          const summary = typeof data.summary === "string" ? data.summary : "";
+          if (event.agentId !== undefined || outcome !== "completed" || summary.trim() === "") {
             return Effect.void;
           }
           return context.emitAssistantText({ sessionId: event.sessionId, text: summary });
