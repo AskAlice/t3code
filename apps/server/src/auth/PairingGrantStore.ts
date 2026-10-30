@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no timingSafeEqual.
+import * as NodeCrypto from "node:crypto";
 import {
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
@@ -248,6 +250,9 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
+  const desktopTokenHash = config.desktopBootstrapToken
+    ? NodeCrypto.createHash("sha256").update(config.desktopBootstrapToken).digest()
+    : undefined;
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
   const generatePairingToken = Effect.gen(function* () {
     let credential = "";
@@ -398,7 +403,11 @@ const make = Effect.gen(function* () {
       const isDesktopCredential =
         secret !== undefined
           ? isValidDesktopBootstrapToken(secret, credential, now.epochMilliseconds)
-          : Boolean(config.desktopBootstrapToken) && credential === config.desktopBootstrapToken;
+          : desktopTokenHash !== undefined &&
+            NodeCrypto.timingSafeEqual(
+              desktopTokenHash,
+              NodeCrypto.createHash("sha256").update(credential).digest(),
+            );
       if (isDesktopCredential) {
         if (
           (input?.requestedScopes !== undefined &&
