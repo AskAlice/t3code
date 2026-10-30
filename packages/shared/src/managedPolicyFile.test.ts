@@ -104,6 +104,11 @@ describe("readManagedPolicy", () => {
         );
       }
       assert.equal(yield* read("darwin", file), managedPolicyPath("darwin"));
+      const typo = JSON.stringify({ ...settings, limits: { maxRuntimeMod: "auto" } });
+      assert.include(
+        yield* read("darwin", { [managedPolicyPath("darwin")]: typo }),
+        '["limits"]["maxRuntimeMod"]',
+      );
       assert.isUndefined(yield* read("darwin", {}));
       assert.include(
         yield* read("darwin", { ...profile, ...file }, plutil),

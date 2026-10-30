@@ -1,4 +1,5 @@
 import { ManagedPolicyDocument } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -45,15 +46,17 @@ const decodeDocumentExit = Schema.decodeUnknownExit(ManagedPolicyDocument, {
 /** Decode a policy from JSON text, or from a value a profile already parsed. */
 const decodeDocument = (path: string, raw: unknown) => {
   const decoded = typeof raw === "string" ? decodeDocumentJsonExit(raw) : decodeDocumentExit(raw);
-  return Exit.isFailure(decoded)
-    ? Effect.fail(
-        new ManagedPolicyFileError({
-          path,
-          reason: "it is not valid JSON or does not match the policy schema",
-          cause: decoded.cause,
-        }),
-      )
-    : Effect.succeed(decoded.value);
+  if (Exit.isSuccess(decoded)) return Effect.succeed(decoded.value);
+  const error = Cause.squash(decoded.cause);
+  // The schema message names the offending key, e.g. `Expected no excess property at ["limits"]`.
+  const detail = Schema.isSchemaError(error) ? ` (${error.message.replace(/\s*\n\s*/g, " ")})` : "";
+  return Effect.fail(
+    new ManagedPolicyFileError({
+      path,
+      reason: `it is not valid JSON or does not match the policy schema${detail}`,
+      cause: decoded.cause,
+    }),
+  );
 };
 
 /** Read the policy document at `path`; a missing file means no policy. */
