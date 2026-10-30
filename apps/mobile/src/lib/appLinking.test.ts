@@ -1,13 +1,30 @@
+import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { NavigationState } from "@react-navigation/native";
+import { restoreSettingsLinkState } from "../features/settings/settings-navigation";
 import {
   findLinkedRoute,
   findStackRoute,
   restoreDraftLinkState,
+  runningAppLinkAction,
   shouldHandleAppLink,
   updateLinkedRoute,
 } from "./appLinking";
+
+const requireFromNative = NodeModule.createRequire(
+  NodeModule.createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
+);
+const requireFromCore = NodeModule.createRequire(
+  requireFromNative.resolve("@react-navigation/core/package.json"),
+);
+const { getActionFromState, getStateFromPath } = requireFromNative("@react-navigation/core") as {
+  readonly getActionFromState: typeof import("@react-navigation/native").getActionFromState;
+  readonly getStateFromPath: typeof import("@react-navigation/native").getStateFromPath;
+};
+const { StackRouter } = requireFromCore("@react-navigation/routers") as {
+  readonly StackRouter: typeof import("@react-navigation/native").StackRouter;
+};
 
 describe("shouldHandleAppLink", () => {
   it.each(["t3code://", "t3code:///", "t3code-dev://", "t3code-preview://"])(
@@ -177,5 +194,64 @@ describe("findStackRoute", () => {
     ]);
     expect(findStackRoute(root, "NewTaskProject")?.routeKey).toBe("second");
     expect(findStackRoute(root, "Thread")).toBeUndefined();
+  });
+});
+
+describe("links that arrive while the app runs", () => {
+  const linking = {
+    initialRouteName: "Home",
+    screens: {
+      Home: "",
+      Thread: { path: "threads/:environmentId?/:threadId?", alias: ["new/draft"] },
+      NewTaskFiles: "new/draft/files",
+      Settings: "settings",
+      SettingsAbout: "settings/about",
+    },
+  };
+  const router = StackRouter({});
+  const options = {
+    routeNames: Object.keys(linking.screens),
+    routeParamList: {},
+    routeGetIdList: {},
+  };
+  const open = (...names: string[]) =>
+    router.getRehydratedState(
+      { index: names.length - 1, routes: names.map((name) => ({ name })) },
+      options,
+    );
+
+  // The running app's link handling: parse as App.tsx does, then dispatch on the root stack.
+  function follow(root: NavigationState, path: string) {
+    const link = restoreSettingsLinkState(
+      restoreDraftLinkState(getStateFromPath(path, linking), path),
+      undefined,
+    )!;
+    const action = runningAppLinkAction(link, root, getActionFromState(link, linking))!;
+    const next = router.getStateForAction(root, { target: root.key, ...action }, options);
+    if (!next) throw new Error(`Root stack rejected ${action.type}`);
+    // React Navigation rehydrates a partial state a RESET leaves behind.
+    return router.getRehydratedState(next as NavigationState, options);
+  }
+
+  it.each([
+    ["settings/about", ["Home", "Settings", "SettingsAbout"]],
+    ["new/draft/files?environmentId=env-1&projectId=project-1", ["Home", "Thread", "NewTaskFiles"]],
+  ])("%s opens its page over the live workspace instead of replacing it", (path, names) => {
+    const root = open("Home");
+    const next = follow(root, path);
+    expect(next.routes.map((route) => route.name)).toEqual(names);
+    expect({ stack: next.key, home: next.routes[0]?.key }).toEqual({
+      stack: root.key,
+      home: root.routes[0]?.key,
+    });
+  });
+
+  it("a bare settings link over an open Settings page goes back to the Settings tab", () => {
+    const root = open("Home", "Settings", "SettingsAbout");
+    const next = follow(root, "settings");
+    expect(next.routes.map((route) => route.name)).toEqual(["Home", "Settings"]);
+    expect(next.routes.map((route) => route.key)).toEqual(
+      root.routes.slice(0, 2).map((route) => route.key),
+    );
   });
 });
