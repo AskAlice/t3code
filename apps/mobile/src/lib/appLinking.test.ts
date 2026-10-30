@@ -221,7 +221,7 @@ describe("links that arrive while the app runs", () => {
     );
 
   // The running app's link handling: parse as App.tsx does, then dispatch on the root stack.
-  function follow(root: NavigationState, path: string) {
+  function follow(root: ReturnType<typeof open>, path: string) {
     const link = restoreSettingsLinkState(
       restoreDraftLinkState(getStateFromPath(path, linking), path),
       undefined,
@@ -230,7 +230,7 @@ describe("links that arrive while the app runs", () => {
     const next = router.getStateForAction(root, { target: root.key, ...action }, options);
     if (!next) throw new Error(`Root stack rejected ${action.type}`);
     // React Navigation rehydrates a partial state a RESET leaves behind.
-    return router.getRehydratedState(next as NavigationState, options);
+    return router.getRehydratedState(next as typeof root, options);
   }
 
   it.each([
