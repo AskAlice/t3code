@@ -10,6 +10,7 @@ import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { useHardwareBack } from "../../lib/backHandler";
 import { HomeRouteScreen } from "../home/HomeRouteScreen";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
@@ -46,6 +47,12 @@ export function WorkspaceRootScreen() {
         : 16,
   };
   const tab = workspace.state.selectedTab;
+  // Newer than an open search's listener after a tab switch, so it yields to search explicitly.
+  useHardwareBack(tab !== "threads", () => {
+    if (workspace.state.tabs[tab].searchMode !== "resting") return false;
+    workspace.dispatch({ type: "select", tab: "threads" });
+    return true;
+  });
 
   if (layout.usesSplitView) {
     if (enabled.length === 0) return <View className="flex-1 bg-screen" />;

@@ -57,11 +57,16 @@ vi.mock("./AndroidWorkspaceNavigation", async () => {
   const { useWorkspaceTabs } = await import("./WorkspaceTabsContext");
   function Tabs() {
     const workspace = useWorkspaceTabs()!;
-    return (["threads", "pullRequests", "usage"] as const).map((tab) => (
-      <button key={tab} onClick={() => workspace.dispatch({ type: "select", tab })}>
-        {tab}
-      </button>
-    ));
+    return (
+      <>
+        {(["threads", "pullRequests", "usage"] as const).map((tab) => (
+          <button key={tab} onClick={() => workspace.dispatch({ type: "select", tab })}>
+            {tab}
+          </button>
+        ))}
+        <button onClick={() => workspace.dispatch({ type: "search" })}>search</button>
+      </>
+    );
   }
   return { AndroidWorkspaceNavigation: Tabs, FloatingWorkspaceTabs: Tabs };
 });
@@ -120,4 +125,13 @@ it.each([
   expect(screen.visibleLists()).toEqual(["Threads list"]);
 
   expect(screen.pressBack(), "Back from Threads leaves the app").toBe(false);
+});
+
+it("Back with pull request search open is left to the search", () => {
+  using screen = setup();
+  screen.selectTab("pullRequests");
+  screen.selectTab("search");
+
+  expect(screen.pressBack()).toBe(false);
+  expect(screen.visibleLists()).toEqual(["Pull requests list"]);
 });
