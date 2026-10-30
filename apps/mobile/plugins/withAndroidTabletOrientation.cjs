@@ -1,6 +1,6 @@
 const { withMainActivity } = require("expo/config-plugins");
 
-// FULL_USER respects rotation lock. Foldables change smallestScreenWidthDp without recreating the activity.
+// FULL_USER respects rotation lock. Measure the display, not the possibly letterboxed window; folds don't recreate the activity.
 
 const ORIENTATION_METHODS = `
   // Applied in onCreate and re-applied on fold/unfold; added by
@@ -11,11 +11,23 @@ const ORIENTATION_METHODS = `
   }
 
   private fun applyTabletOrientation() {
-    requestedOrientation = if (resources.configuration.smallestScreenWidthDp >= 600) {
+    requestedOrientation = if (displaySmallestWidthDp() >= 600) {
       ActivityInfo.SCREEN_ORIENTATION_FULL_USER
     } else {
       ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
+  }
+
+  // configuration.densityDpi is what WindowMetrics.getDensity() reports; letterboxing leaves it unscaled.
+  private fun displaySmallestWidthDp(): Int {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      val bounds = windowManager.maximumWindowMetrics.bounds
+      return minOf(bounds.width(), bounds.height()) * DisplayMetrics.DENSITY_DEFAULT / resources.configuration.densityDpi
+    }
+    val metrics = DisplayMetrics()
+    @Suppress("DEPRECATION")
+    windowManager.defaultDisplay.getRealMetrics(metrics)
+    return minOf(metrics.widthPixels, metrics.heightPixels) * DisplayMetrics.DENSITY_DEFAULT / metrics.densityDpi
   }
 `;
 
@@ -46,7 +58,7 @@ module.exports = function withAndroidTabletOrientation(config) {
     contents = insertAfter(
       contents,
       "import android.os.Bundle",
-      "\nimport android.content.pm.ActivityInfo\nimport android.content.res.Configuration",
+      "\nimport android.content.pm.ActivityInfo\nimport android.content.res.Configuration\nimport android.util.DisplayMetrics",
       "the android.os.Bundle import",
     );
     contents = insertAfter(
