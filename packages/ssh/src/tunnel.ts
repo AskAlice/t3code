@@ -534,7 +534,7 @@ const REMOTE_MANAGED_SERVER_RUNNING_SCRIPT = `managed_server_running() {
     esac
     return 1
   fi
-  ! ps -o args= -p "$$" >/dev/null 2>&1
+  ! ps -ww -o args= -p "$$" >/dev/null 2>&1
 }`;
 
 const REMOTE_LAUNCH_SCRIPT = `set -eu
