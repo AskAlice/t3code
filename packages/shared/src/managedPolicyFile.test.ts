@@ -120,8 +120,14 @@ describe("readManagedPolicy", () => {
 
       assert.equal(yield* read("win32", {}, reg(output("REG_SZ", policy))), WINDOWS_POLICY_KEY);
       assert.isUndefined(yield* read("win32", {}, reg("", 1)));
-      // A query that fails exits 1 too, so it must not read as no policy.
-      assert.include(yield* read("win32", {}, reg("", 1, 1)), "registry cannot be read");
+      // Where reg cannot read the registry at all, the file still applies.
+      assert.isUndefined(yield* read("win32", {}, reg("", 1, 1)));
+      assert.equal(
+        yield* read("win32", { [managedPolicyPath("win32")]: policy }, reg("", 1, 1)),
+        managedPolicyPath("win32"),
+      );
+      // Once reg works, a failed query of the value is not read as no policy.
+      assert.include(yield* read("win32", {}, reg("", 5)), "cannot be read as a string");
       assert.equal(
         yield* read("win32", { [managedPolicyPath("win32")]: policy }, reg("", 1)),
         managedPolicyPath("win32"),
