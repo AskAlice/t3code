@@ -17,5 +17,6 @@ describe("videoMimeType", () => {
 
   it("does not treat a TypeScript file the OS labels as MPEG transport stream as video", () => {
     expect(videoMimeType({ name: "clamp.ts", mimeType: "video/mp2t" })).toBeNull();
+    expect(videoMimeType({ name: "clamp.ts", mimeType: "video/vnd.dlna.mpeg-tts" })).toBeNull();
   });
 });
