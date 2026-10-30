@@ -3956,11 +3956,10 @@ interface ActiveClaudeSubagent {
   lastAssistantText: string | null;
   lastAssistantMessageId: string | null;
   transcriptCursor: WorkflowAgentTranscriptCursor;
-  transcriptDir: string | null;
+  // Transcript lines read but not shown yet: they may follow SDK frames still queued.
+  transcriptBacklog: Array<SDKAssistantMessage | SDKUserMessage>;
   // Older Claude Code also forwards thinking in SDK frames, under the transcript line's uuid.
   readonly shownThinkingIds: Set<string>;
-  // Epoch ms of the newest transcript line read, and whether that line ended the subagent's turn.
-  transcriptReadThrough: number;
   transcriptTurnEnded: boolean;
 }
 
@@ -3971,6 +3970,8 @@ interface ClaudeLiveQueryContext {
   readonly queryPolicyKey: string;
   selection: CompiledClaudeModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
+  // Done once close is requested; `closed` waits for the frame being handled.
+  readonly closing: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
   // "early" echoes on the first frame; "acknowledged" confirms uuid acceptance, but resume turns can still precede the prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
@@ -3981,6 +3982,9 @@ interface ClaudeLiveQueryContext {
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
 }
+
+const closeLiveQuery = (live: ClaudeLiveQueryContext) =>
+  Deferred.succeed(live.closing, undefined).pipe(Effect.andThen(live.query.close), Effect.ignore);
 
 interface ActiveClaudeToolCall {
   readonly nativeItemId: string;
@@ -4577,6 +4581,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           adapterOptions.environment.CLAUDE_CONFIG_DIR === undefined
             ? undefined
             : path.resolve(session.cwd, adapterOptions.environment.CLAUDE_CONFIG_DIR);
+        // Native subagent transcript directories, by native session id.
+        const nativeSubagentTranscriptDirs = new Map<string, string>();
         // Waits for the tail's last read so its output lands before the call settles.
         const stopTaskOutputTail = (toolUseId: string) =>
           Effect.suspend(() => {
@@ -5708,18 +5714,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             lastAssistantText: null,
             lastAssistantMessageId: null,
             transcriptCursor: initialWorkflowAgentTranscriptCursor,
-            transcriptDir: null,
+            transcriptBacklog: [],
             shownThinkingIds: new Set(),
-            transcriptReadThrough: 0,
             transcriptTurnEnded: false,
           };
-          // The earlier process already showed this transcript's thinking.
-          yield* drainNativeSubagentTranscript(
-            subagent,
-            resume.taskId,
-            resume.nativeThreadId,
-            false,
-          );
           yield* Ref.update(sessionSubagentsByTaskId, (current) =>
             new Map(current).set(resume.taskId, subagent),
           );
@@ -6357,9 +6355,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               input.reopen === true ? null : (existingSubagent?.lastAssistantMessageId ?? null),
             transcriptCursor:
               existingSubagent?.transcriptCursor ?? initialWorkflowAgentTranscriptCursor,
-            transcriptDir: existingSubagent?.transcriptDir ?? null,
+            transcriptBacklog: existingSubagent?.transcriptBacklog ?? [],
             shownThinkingIds: existingSubagent?.shownThinkingIds ?? new Set(),
-            transcriptReadThrough: existingSubagent?.transcriptReadThrough ?? 0,
             transcriptTurnEnded:
               input.reopen !== true && existingSubagent?.transcriptTurnEnded === true,
           } satisfies ActiveClaudeSubagent;
@@ -6521,14 +6518,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               workflow: workflowWithThreads,
             });
             if ((yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId) !== subagent) return;
-          } else {
+          } else if (input.status !== "running") {
             // Claude Code settles a subagent before flushing its final message; show that thinking before the reply.
-            yield* awaitNativeSubagentTranscript(
+            const liveQuery = yield* Ref.get(queryContext);
+            yield* releaseNativeSubagentTranscript({
               subagent,
-              input.taskId,
-              input.context.nativeThreadId,
-              () => input.status === "running" || subagent.transcriptTurnEnded,
-            );
+              taskId: input.taskId,
+              nativeThreadId: input.context.nativeThreadId,
+              // Only a completed subagent still writes; a stopped one may never end its turn.
+              closing:
+                input.status === "completed" &&
+                liveQuery?.nativeThreadId === input.context.nativeThreadId
+                  ? liveQuery.closing
+                  : null,
+              through: (backlog) => (subagent.transcriptTurnEnded ? backlog.length : undefined),
+            });
           }
           yield* emitProviderEvent({
             type: "turn_item.updated",
@@ -6973,13 +6977,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         // Claude Code forwards neither a native subagent's thinking nor its text, only tool calls;
         // its transcript has them. Claude derives the project directory, so find it by session id.
-        const drainNativeSubagentTranscript = Effect.fnUntraced(function* (
+        // Returns false when Claude keeps no transcript for the session.
+        const readNativeSubagentTranscript = Effect.fnUntraced(function* (
           subagent: ActiveClaudeSubagent,
           taskId: string,
           nativeThreadId: string,
-          showThinking: boolean,
         ) {
-          if (subagent.transcriptDir === null) {
+          let transcriptDir = nativeSubagentTranscriptDirs.get(nativeThreadId);
+          if (transcriptDir === undefined) {
             const projectsDir = path.join(
               claudeConfigDirOverride ?? path.join(yield* HostProcess.HomeDirectory, ".claude"),
               "projects",
@@ -6988,74 +6993,91 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               .readDirectory(projectsDir)
               .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
             for (const project of projects) {
-              const dir = path.join(projectsDir, project, nativeThreadId, "subagents");
+              // The session transcript is written before any subagent starts.
               if (
                 yield* fileSystem
-                  .exists(path.join(dir, `agent-${taskId}.jsonl`))
+                  .exists(path.join(projectsDir, project, `${nativeThreadId}.jsonl`))
                   .pipe(Effect.orElseSucceed(() => false))
               ) {
-                subagent.transcriptDir = dir;
+                transcriptDir = path.join(projectsDir, project, nativeThreadId, "subagents");
+                nativeSubagentTranscriptDirs.set(nativeThreadId, transcriptDir);
                 break;
               }
             }
-            // Claude may write the transcript after task_started; later updates look again.
-            if (subagent.transcriptDir === null) return;
+            if (transcriptDir === undefined) return false;
           }
           let drained = false;
           while (!drained) {
             const read = yield* readWorkflowAgentTranscript({
-              transcriptDir: subagent.transcriptDir,
+              transcriptDir,
               agentId: taskId,
               cursor: subagent.transcriptCursor,
               ...(claudeConfigDirOverride === undefined
                 ? {}
                 : { configDir: claudeConfigDirOverride }),
             }).pipe(Effect.option);
-            if (Option.isNone(read)) return;
+            // Claude creates the subagent's file after task_started.
+            if (Option.isNone(read)) return true;
             const advanced = read.value.cursor.offset !== subagent.transcriptCursor.offset;
             subagent.transcriptCursor = read.value.cursor;
-            const target = subagentProjectionTarget(subagent);
             for (const line of read.value.lines) {
               if (!isClaudeTranscriptConversationLine(line)) continue;
-              const writtenAt = Date.parse(text(field(line, "timestamp")) ?? "");
-              if (!Number.isNaN(writtenAt)) {
-                subagent.transcriptReadThrough = Math.max(
-                  subagent.transcriptReadThrough,
-                  writtenAt,
-                );
-              }
               subagent.transcriptTurnEnded = isClaudeTranscriptTurnEnd(line);
-              if (showThinking && line.type === "assistant") {
-                yield* emitSubagentThinking(
-                  target,
-                  line,
-                  Number.isNaN(writtenAt) ? yield* DateTime.now : DateTime.makeUnsafe(writtenAt),
-                );
-              }
+              subagent.transcriptBacklog.push(line);
             }
             // A line longer than the cap can't advance; stop rather than spin.
             drained = !read.value.truncated || !advanced;
           }
+          return true;
         });
 
         // Claude Code flushes the transcript about every 100 ms, after the SDK frames it wrote with.
-        // This holds the session's frames until then, bounded by the flush window.
-        const awaitNativeSubagentTranscript = Effect.fnUntraced(function* (
-          subagent: ActiveClaudeSubagent,
-          taskId: string,
-          nativeThreadId: string,
-          caughtUp: () => boolean,
-        ) {
-          yield* drainNativeSubagentTranscript(subagent, taskId, nativeThreadId, true);
-          for (
-            let waited = 0;
-            subagent.transcriptDir !== null &&
-            !caughtUp() &&
-            waited < WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS;
-            waited += NATIVE_SUBAGENT_TRANSCRIPT_POLL_MS
-          ) {
-            yield* Effect.sleep(NATIVE_SUBAGENT_TRANSCRIPT_POLL_MS);
-            yield* drainNativeSubagentTranscript(subagent, taskId, nativeThreadId, true);
+        // Re-reads until `through` counts the backlog lines to show, bounded by the flush window,
+        // then shows their thinking. Without `closing` it reads once.
+        const releaseNativeSubagentTranscript = Effect.fnUntraced(function* (input: {
+          readonly subagent: ActiveClaudeSubagent;
+          readonly taskId: string;
+          readonly nativeThreadId: string;
+          readonly closing: Deferred.Deferred<void> | null;
+          readonly through: (
+            backlog: ReadonlyArray<SDKAssistantMessage | SDKUserMessage>,
+          ) => number | undefined;
+        }) {
+          const { subagent } = input;
+          const persisted = yield* readNativeSubagentTranscript(
+            subagent,
+            input.taskId,
+            input.nativeThreadId,
+          );
+          let through = input.through(subagent.transcriptBacklog);
+          const closing = input.closing;
+          if (persisted && closing !== null) {
+            for (
+              let waited = 0;
+              through === undefined && waited < WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS;
+              waited += NATIVE_SUBAGENT_TRANSCRIPT_POLL_MS
+            ) {
+              const closed = yield* Deferred.await(closing).pipe(
+                Effect.timeoutOption(NATIVE_SUBAGENT_TRANSCRIPT_POLL_MS),
+              );
+              if (Option.isSome(closed)) break;
+              yield* readNativeSubagentTranscript(subagent, input.taskId, input.nativeThreadId);
+              through = input.through(subagent.transcriptBacklog);
+            }
+          }
+          // Lines read before an unseen frame's line was flushed all precede it.
+          const target = subagentProjectionTarget(subagent);
+          for (const line of subagent.transcriptBacklog.splice(
+            0,
+            through ?? subagent.transcriptBacklog.length,
+          )) {
+            if (line.type !== "assistant") continue;
+            yield* emitSubagentThinking(
+              target,
+              line,
+              Option.getOrUndefined(DateTime.make(text(field(line, "timestamp")) ?? "")) ??
+                (yield* DateTime.now),
+            );
           }
         });
 
@@ -9009,20 +9031,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const assistantParentToolUseId = parentToolUseIdFromSdkMessage(message);
           if (message.type === "assistant" && assistantParentToolUseId !== null) {
             const subagent = yield* resolveSubagentByToolUseId(context, assistantParentToolUseId);
-            const writtenAt = Date.parse(text(field(message, "timestamp")) ?? "");
             // Items take positions in commit order, and this frame outruns the transcript flush
-            // that holds the thinking before it.
-            if (
-              subagent !== undefined &&
-              subagent.task.workflow === undefined &&
-              !Number.isNaN(writtenAt)
-            ) {
-              yield* awaitNativeSubagentTranscript(
+            // that holds the thinking before it. The frame shares its transcript line's uuid.
+            const taskId = subagent?.task.nativeTaskRef?.nativeId;
+            if (subagent !== undefined && subagent.task.workflow === undefined && taskId) {
+              yield* releaseNativeSubagentTranscript({
                 subagent,
-                subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
-                liveQuery.nativeThreadId,
-                () => subagent.transcriptReadThrough >= writtenAt,
-              );
+                taskId,
+                nativeThreadId: liveQuery.nativeThreadId,
+                closing: liveQuery.closing,
+                through: (backlog) => {
+                  const index = backlog.findIndex((line) => line.uuid === message.uuid);
+                  return index === -1 ? undefined : index + 1;
+                },
+              });
             }
           }
           const toolPresentations = claudeToolPresentationsFromAssistantMessage(message);
@@ -10040,7 +10062,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
+            yield* closeLiveQuery(existing);
             if (existing.nativeThreadId !== nativeThreadId) {
               yield* clearWakeStateForNativeThread(existing.nativeThreadId);
               yield* resetBackgroundTaskStateForNativeThreadProcess(existing.nativeThreadId, {
@@ -10126,6 +10148,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             status: "active",
           });
           const closed = yield* Deferred.make<void, never>();
+          const closing = yield* Deferred.make<void, never>();
           const context: ClaudeLiveQueryContext = {
             queryPolicy,
             nativeThreadId,
@@ -10133,6 +10156,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             queryPolicyKey,
             selection: compiledSelection,
             closed,
+            closing,
             lastTurn: null,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
@@ -10173,6 +10197,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                yield* Deferred.succeed(closing, undefined);
                 const heldContext = yield* Ref.get(activeTurn);
                 if (
                   (yield* Ref.get(queryContext))?.query === querySession &&
@@ -10575,7 +10600,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return next;
             });
             yield* existing.query.interrupt;
-            yield* existing.query.close.pipe(Effect.ignore);
+            yield* closeLiveQuery(existing);
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
             );
@@ -10776,7 +10801,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const closeSession = Effect.fnUntraced(function* () {
           const existing = yield* Ref.get(queryContext);
           if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
+            yield* closeLiveQuery(existing);
           }
           yield* Effect.yieldNow;
           yield* queryRunner.assertComplete.pipe(
@@ -10796,7 +10821,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           existing.stopping = true;
-          yield* existing.query.close.pipe(Effect.ignore);
+          yield* closeLiveQuery(existing);
           const closed = yield* Deferred.await(existing.closed).pipe(
             Effect.timeoutOption("10 seconds"),
           );
