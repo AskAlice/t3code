@@ -354,12 +354,18 @@ describe("derived thread state through a streamed message", () => {
     expect(thread.queue()?.queuedRuns.map((queued) => queued.text)).toEqual(["Then run lint"]);
   });
 
-  it("keeps checkpoint summaries through streamed text and follows a new checkpoint", () => {
+  it("keeps checkpoint summaries through streamed text and follows new assistant messages and checkpoints", () => {
     using thread = setup();
     const first = thread.checkpoints();
     thread.apply(messageUpdated({ ...streamed, text: "Hello", updatedAt: later }));
     thread.apply(messageUpdated({ ...streamed, text: "Hello there", updatedAt: later }));
     expect(thread.checkpoints()).toBe(first);
+
+    const followUp = { ...streamed, id: MessageId.make("message-follow-up"), text: "Done" };
+    thread.apply(messageUpdated(followUp));
+    expect(thread.checkpoints().map((summary) => summary.assistantMessageId)).toEqual([
+      followUp.id,
+    ]);
 
     thread.apply({
       id: EventId.make("checkpoint-2"),
