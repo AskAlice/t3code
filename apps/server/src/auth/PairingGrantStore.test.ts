@@ -141,7 +141,7 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       const otherCase = yield* Effect.flip(bootstrapCredentials.consume("ABCDEFGHJKMN"));
 
       const forbidden = yield* Effect.flip(
-        bootstrapCredentials.consume("abcdefghjkmn", { requiredScopes: ["access:write"] }),
+        bootstrapCredentials.consume("abcdefghjkmn", { requiredScopes: ["review:write"] }),
       );
       expect(forbidden._tag).toBe("BootstrapCredentialScopeNotGrantedError");
       expect(exact.method).toBe("desktop-bootstrap");
