@@ -955,8 +955,13 @@ export const t3Default = (
     const n = sample.nextTask++;
     const title =
       isRecord(request) && typeof request.title === "string" ? request.title : "New thread";
-    sample.threads.set(uuid(n), { title, brief: valueText(brief ?? "") });
-    return { threadId: uuid(n), runId: `run-${n}`, status: "starting", title };
+    const text = typeof brief === "string" ? brief.trim() : "";
+    sample.threads.set(uuid(n), { title, brief: text });
+    return {
+      threadId: uuid(n),
+      title,
+      ...(text ? { runId: `run-${n}`, status: "starting" } : { status: "idle" }),
+    };
   };
   switch (name) {
     case "t3_thread_launch":
@@ -1040,9 +1045,15 @@ export const t3Default = (
       const threadId = valueText(input.threadId);
       const launched = sample.threads.get(threadId);
       if (launched !== undefined) {
-        const items = [{ position: 1, createdBy: "user", text: launched.brief }];
-        const thread = { threadId, title: launched.title, status: "running" };
-        return { thread, items, nextPosition: 2, hasMore: false };
+        const items = launched.brief
+          ? [{ position: 1, createdBy: "user", text: launched.brief }]
+          : [];
+        const thread = {
+          threadId,
+          title: launched.title,
+          status: launched.brief ? "running" : "idle",
+        };
+        return { thread, items, nextPosition: items.length + 1, hasMore: false };
       }
       const { title, status, items } = DEFAULT_THREAD;
       return { thread: { threadId, title, status }, items, nextPosition: 3, hasMore: false };
@@ -1393,7 +1404,12 @@ const matchesDistinct = (
   return requests.some(
     (request, i) =>
       !taken.has(i) &&
-      matches(first, request) &&
+      matches(
+        first,
+        typeof first === "string" && isRecord(request)
+          ? (request.message ?? request.prompt)
+          : request,
+      ) &&
       matchesDistinct(rest, requests, new Set([...taken, i])),
   );
 };

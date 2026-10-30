@@ -101,6 +101,16 @@ it("counts the new threads an agent asks for, one brief per thread, over both cr
   assert.deepEqual(failed(expect, run(batch("Fix reconnect, csv and admin"))), [label]);
   assert.deepEqual(failed(expect, run(batch("reconnect, csv, admin", "csv", "csv"))), [label]);
   assert.deepEqual(failed(expect, run(batch("reconnect", "csv", "admin", "docs"))), [label]);
+  assert.deepEqual(
+    failed(
+      expect,
+      run(launch("reconnect"), launch("admin"), {
+        tool: "t3_thread_launch",
+        input: { title: "CSV", message: "Fix reconnect" },
+      }),
+    ),
+    [label],
+  );
 });
 
 it("runs code-mode calls without exposing host capabilities, including after await", async () => {
@@ -392,9 +402,16 @@ it("gives each launched thread its own id, and reading it back shows that thread
   assert.equal(new Set(ids).size, 3);
   const read = (threadId: unknown) =>
     t3Default(sample, "t3_thread_read", { threadId }) as {
-      thread: { title: string };
+      thread: { title: string; status: string };
       items: Array<{ text: string }>;
     };
+  const idle = t3Default(sample, "create_threads", { threads: [{ title: "Later" }] }) as {
+    threads: Array<{ threadId: string; status: string; runId?: string }>;
+  };
+  assert.equal(idle.threads[0]?.status, "idle");
+  assert.isUndefined(idle.threads[0]?.runId);
+  assert.equal(read(idle.threads[0]?.threadId).thread.status, "idle");
+  assert.deepEqual(read(idle.threads[0]?.threadId).items, []);
   assert.equal(read(ids[1]).thread.title, "CSV");
   assert.equal(read(ids[2]).items[0]?.text, "Fix admin expiry");
   assert.equal(
