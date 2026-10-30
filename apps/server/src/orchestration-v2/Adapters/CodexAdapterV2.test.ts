@@ -2458,6 +2458,89 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("persists the T3 context digest when turn/started precedes its response", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "early-started-context-thread";
+        const nativeTurnId = "early-started-context-turn";
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId,
+          codexInput: [{ type: "text", text: "hello" }],
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          hasT3Mcp: true,
+        });
+        const turnEvent = (method: "turn/started" | "turn/completed", status: string) => ({
+          type: "emit_inbound" as const,
+          label: method,
+          frame: {
+            method,
+            params: {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: nativeTurnId, status }),
+            },
+          },
+        });
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "early-started-context",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "unused-turn",
+                prompt: "unused-prompt",
+              }).slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "turn/start",
+                frame: { id: 3, method: "turn/start", params },
+              },
+              turnEvent("turn/started", "inProgress"),
+              {
+                type: "emit_inbound",
+                label: "turn/start",
+                frame: {
+                  id: 3,
+                  result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
+                },
+              },
+              { ...turnEvent("turn/completed", "completed"), afterMs: 1000 },
+            ],
+          }),
+        );
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("test"),
+          threadId: harness.threadId,
+          providerSessionId: "early-started-context-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer test",
+          browserToolsAvailable: true,
+        });
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("early-started-context"),
+            text: "hello",
+          }),
+        );
+        yield* TestClock.adjust("1 second");
+        yield* harness.firstTerminal;
+        const persisted = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated",
+        )?.providerThread;
+        assert.isString(persisted?.nativeMetadata?.codexAdditionalContextDigest);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("compacts Codex with the native RPC and completes the compaction turn", () =>
     Effect.scoped(
       Effect.gen(function* () {
