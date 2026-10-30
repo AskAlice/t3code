@@ -1,6 +1,7 @@
 import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import * as Layer from "effect/Layer";
@@ -156,6 +157,33 @@ describe("liveActivityPreferences", () => {
 
       expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(layerTest));
+  });
+
+  it.effect("enables updates when a host refuses an environment link proof", () => {
+    vi.mocked(linkEnvironmentToCloudWithPreference).mockImplementationOnce(() =>
+      Effect.fail(
+        new CloudEnvironmentLinkError({
+          message: "Could not obtain environment link proof: Invalid managed endpoint origin.",
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        setLiveActivityUpdatesEnabled({
+          enabled: true,
+          previousEnabled: false,
+          clerkToken: "clerk-token",
+          connections: [connection],
+          canConfigureEnvironment: () => true,
+        }),
+      );
+
+      expect(exit).toStrictEqual(Exit.void);
+      expect(vi.mocked(updateAgentAwarenessRegistrationPreferences).mock.lastCall).toEqual([
+        { liveActivitiesEnabled: true },
+      ]);
     }).pipe(Effect.provide(layerTest));
   });
 });
