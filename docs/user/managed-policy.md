@@ -138,9 +138,13 @@ desktop app, keep `desktop` in the list, or the app cannot start.
 
 Without `remote`, the server only listens on this machine, does not create pairing links, and
 signs out devices that paired earlier. The desktop app starts with network access and Tailscale
-Serve off, whatever the user chose. The server turns off Tailscale Serve HTTPS forwarding to its
-port, such as one `t3 pair --tailscale` set up, and does not start while it stays on. T3 Connect is a way for remote clients to reach the machine, so it turns off too. To keep remote
-access but turn off only T3 Connect, set `"connect": false`.
+Serve off, whatever the user chose. T3 Connect is a way for remote clients to reach the machine, so
+it turns off too. To keep remote access but turn off only T3 Connect, set `"connect": false`.
+
+When it starts, the server also turns off Tailscale Serve HTTPS forwarding to its port, such as one
+`t3 pair --tailscale` set up. It does not start while that forwarding stays on, or while
+Tailscale's answer cannot be read. If Tailscale is not running then, a mapping it keeps returns
+when Tailscale starts; restart T3 Code to turn it off.
 
 ### Other capabilities
 
