@@ -1678,6 +1678,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         // Absent: fall back to persisted metadata. Undefined: Codex holds no known context.
         const deliveredContextDigests = new Map<string, string | undefined>();
+        // Recorded once Codex accepts the turn, before its turn/started can lead to a terminal.
+        const pendingContextDigests = new Map<string, string>();
         // Codex drops client developer messages during compaction but only
         // resends additionalContext when it changes.
         const restoreAdditionalContext = Effect.fn("CodexAdapterV2.restoreAdditionalContext")(
@@ -1932,6 +1934,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
         const invalidateAdditionalContext = (threadId: string) =>
           recordAdditionalContextDigest(threadId, undefined);
+        const recordPendingContextDigest = (threadId: string) =>
+          Effect.suspend(() => {
+            const digest = pendingContextDigests.get(threadId);
+            if (digest === undefined) return Effect.void;
+            pendingContextDigests.delete(threadId);
+            return recordAdditionalContextDigest(threadId, digest);
+          });
         // Setting a goal passes through cleared and paused states; publish only the result.
         const goalUpdatesHeld = new Set<string>();
         const emitGoalUpdate = Effect.fnUntraced(function* (nativeThreadId: string) {
@@ -4480,6 +4489,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
+              yield* recordPendingContextDigest(payload.threadId);
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);
                 updated.delete(payload.threadId);
@@ -6588,6 +6598,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const deliveredDigest = deliveredContextDigests.has(threadId)
               ? deliveredContextDigests.get(threadId)
               : turnInput.providerThread.nativeMetadata?.codexAdditionalContextDigest;
+            if (contextDigest !== undefined && contextDigest !== deliveredDigest) {
+              pendingContextDigests.set(threadId, contextDigest);
+            }
             const started = yield* client.request(
               "turn/start",
               contextDigest !== undefined && contextDigest === deliveredDigest
@@ -6595,18 +6608,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 : turnStartParams,
             );
             // A turn/started notification may have registered and completed this turn already.
-            const registeredByNotification =
-              (yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput;
-            if (!registeredByNotification) {
-              rootProviderThreads.set(
-                threadId,
-                withCurrentContextDigest(threadId, turnInput.providerThread),
-              );
-            }
-            if (contextDigest !== undefined && contextDigest !== deliveredDigest) {
-              yield* recordAdditionalContextDigest(threadId, contextDigest);
-            }
-            if (registeredByNotification) return;
+            if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput) return;
+            rootProviderThreads.set(
+              threadId,
+              withCurrentContextDigest(threadId, turnInput.providerThread),
+            );
+            yield* recordPendingContextDigest(threadId);
             const providerThread = rootProviderThreads.get(threadId) ?? turnInput.providerThread;
             yield* registerRootTurn({
               turnInput: { ...turnInput, providerThread },
@@ -6618,14 +6625,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           (effect, turnInput) =>
             effect.pipe(
               Effect.ensuring(
-                Effect.flatMap(getNativeThreadId(turnInput.providerThread), (threadId) =>
-                  Ref.update(pendingRootTurns, (current) => {
+                Effect.flatMap(getNativeThreadId(turnInput.providerThread), (threadId) => {
+                  pendingContextDigests.delete(threadId);
+                  return Ref.update(pendingRootTurns, (current) => {
                     if (current.get(threadId) !== turnInput) return current;
                     const updated = new Map(current);
                     updated.delete(threadId);
                     return updated;
-                  }),
-                ).pipe(Effect.ignore),
+                  });
+                }).pipe(Effect.ignore),
               ),
             ),
         );

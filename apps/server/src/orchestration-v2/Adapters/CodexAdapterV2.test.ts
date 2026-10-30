@@ -2458,7 +2458,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("persists the T3 context digest when turn/started precedes its response", () =>
+  it.effect("persists the T3 context digest when the turn completes before its response", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "early-started-context-thread";
@@ -2470,7 +2470,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           hasT3Mcp: true,
         });
-        const turnEvent = (method: "turn/started" | "turn/completed", status: string) => ({
+        const turnEvent = (
+          method: "turn/started" | "turn/completed",
+          status: "inProgress" | "completed",
+        ) => ({
           type: "emit_inbound" as const,
           label: method,
           frame: {
@@ -2496,6 +2499,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 frame: { id: 3, method: "turn/start", params },
               },
               turnEvent("turn/started", "inProgress"),
+              turnEvent("turn/completed", "completed"),
               {
                 type: "emit_inbound",
                 label: "turn/start",
@@ -2504,7 +2508,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
                 },
               },
-              { ...turnEvent("turn/completed", "completed"), afterMs: 1000 },
             ],
           }),
         );
@@ -2527,9 +2530,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: "hello",
           }),
         );
-        yield* TestClock.adjust("1 second");
         yield* harness.firstTerminal;
-        const persisted = harness.events.findLast(
+        // Run ingestion stops at the terminal event, so the digest must be published before it.
+        const beforeTerminal = harness.events.slice(
+          0,
+          harness.events.findIndex((event) => event.type === "turn.terminal"),
+        );
+        const persisted = beforeTerminal.findLast(
           (event) => event.type === "provider_thread.updated",
         )?.providerThread;
         assert.isString(persisted?.nativeMetadata?.codexAdditionalContextDigest);
