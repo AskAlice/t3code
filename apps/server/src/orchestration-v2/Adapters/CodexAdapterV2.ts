@@ -6954,6 +6954,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
+              // An unloaded thread reloads with an empty context map.
+              contextStoreDigests.delete(response.thread.id);
               return {
                 ...threadInput.providerThread,
                 providerSessionId: input.providerSessionId,

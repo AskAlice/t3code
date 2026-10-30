@@ -2545,7 +2545,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("keeps sending live Codex its T3 context and republishes a lost digest", () =>
+  it.effect("sends live Codex its T3 context until a resume and republishes a lost digest", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "lost-digest-context-thread";
@@ -2584,6 +2584,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             },
           ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>;
+        const { additionalContext: _unchanged, ...thirdWithoutContext } = yield* params("third");
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario: "lost-digest-context",
@@ -2596,6 +2597,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               ...completed(3, "turn-first", yield* params("first")),
               // Omitting context would empty Codex's map, so a later change would repeat every entry.
               ...completed(4, "turn-second", yield* params("second")),
+              {
+                type: "expect_outbound",
+                label: "thread/resume",
+                frame: {
+                  id: 5,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/resume",
+                frame: { id: 5, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+              },
+              ...completed(6, "turn-third", thirdWithoutContext),
             ],
           }),
         );
@@ -2633,6 +2653,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           )
           .findLast((event) => event.type === "provider_thread.updated")?.providerThread;
         assert.isString(republished?.nativeMetadata?.codexAdditionalContextDigest);
+        if (!republished) return yield* Effect.die("Missing republished provider thread");
+        // A resumed thread may have been unloaded, which empties Codex's context map.
+        const resumed = yield* harness.runtime.resumeThread({
+          providerThread: republished,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        yield* harness.runtime.startTurn({
+          ...(yield* turnInput("third")),
+          providerThread: resumed,
+        });
+        yield* harness.awaitTerminal(3);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
