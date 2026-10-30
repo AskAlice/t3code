@@ -115,6 +115,7 @@ let activeLiveActivityRegistrationRetry: ReturnType<typeof setTimeout> | null = 
 let relayTokenProvider: (() => Promise<string | null>) | null = null;
 let relayTokenProviderIdentity: string | null = null;
 let deviceRegistrationGeneration = 0;
+let androidConfigurationWrite = 0;
 let activeDeviceRegistration: {
   readonly input: DeviceRegistrationInput;
   operation: Promise<void>;
@@ -661,6 +662,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     }
   };
   configureAndroid(preferences);
+  const configurationWrite = ++androidConfigurationWrite;
   const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken);
   const bundleId =
     Platform.OS === "android"
@@ -686,10 +688,14 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     }),
     expectedGeneration,
   ).pipe(
-    // A rejected preference change must not stay applied natively while the relay keeps the old one.
+    // A rejected preference change must not stay applied natively while the relay keeps the old
+    // one, unless a newer registration has configured the device since.
     Effect.onError(() =>
       Effect.sync(() => {
-        if (expectedGeneration === deviceRegistrationGeneration) {
+        if (
+          expectedGeneration === deviceRegistrationGeneration &&
+          configurationWrite === androidConfigurationWrite
+        ) {
           configureAndroid(storedPreferences);
         }
       }),
