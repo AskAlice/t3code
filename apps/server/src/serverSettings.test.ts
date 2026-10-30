@@ -1983,14 +1983,23 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
       const service = yield* ServerSettingsModule.ServerSettingsService;
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
+      const selection = {
+        ...DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+        model: "managed",
+      };
       yield* fs.writeFileString(
         config.settingsPath,
-        JSON.stringify({ storageCleanup: { logsAfterDays: 30, browserArtifactsAfterDays: 7 } }),
+        JSON.stringify({
+          storageCleanup: { logsAfterDays: 30, browserArtifactsAfterDays: 7 },
+          textGenerationModelSelection: selection,
+        }),
       );
 
       yield* service.updateSettings({ defaultAutoPull: true });
       const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
       assert.deepEqual(stored.storageCleanup, { logsAfterDays: 30, browserArtifactsAfterDays: 7 });
+      // A model selection is saved whole, never as the one field the policy defaults.
+      assert.deepEqual(stored.textGenerationModelSelection, selection);
     }).pipe(
       Effect.provide(
         layerServerSettings({
@@ -2001,6 +2010,7 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
               value: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, logsAfterDays: 30 },
               locked: false,
             },
+            "textGenerationModelSelection.model": { value: "managed", locked: false },
           },
         }),
       ),

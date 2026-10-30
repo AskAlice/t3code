@@ -424,7 +424,14 @@ export function makeManagedSettings(
               ? setPath(tree, segments, getPath(settings, segments))
               : tree;
           };
-          return defaults.reduce<unknown>((tree, entry) => restore(tree, entry.segments), stripped);
+          // A default inside an atomic setting restores that whole setting, never part of it.
+          return defaults.reduce<unknown>((tree, entry) => {
+            const atomicAt = entry.segments.findIndex(isAtomic);
+            return restore(
+              tree,
+              atomicAt === -1 ? entry.segments : entry.segments.slice(0, atomicAt + 1),
+            );
+          }, stripped);
         };
 
   return {
