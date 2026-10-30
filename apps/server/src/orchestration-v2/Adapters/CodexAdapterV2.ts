@@ -1724,7 +1724,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       : Effect.fail(error),
                 }),
               );
-            const version = userAgent && /\/(\d+\.\d+\.\d+)/u.exec(userAgent)?.[1];
+            const version = userAgent && /\/(\S+)/u.exec(userAgent)?.[1];
             const advisory =
               version && adapterOptions.compatibility
                 ? yield* adapterOptions.compatibility(version)
