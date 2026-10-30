@@ -54,6 +54,7 @@ import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { formatBytes } from "../../lib/formatBytes";
 import { shouldCollapseUserMessage } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -87,6 +88,59 @@ const MEDIA_EDGE_CLASS_NAME =
 
 const BUBBLE_CHIP_CLASS_NAME =
   "[&_[data-slot=context-chip]]:[--context-chip-ink:var(--context-chip-message,var(--context-chip-accent))]";
+
+function UserFileCard({ file }: { readonly file: ChatFileAttachment }) {
+  const ctx = use(TimelineRowCtx);
+  const extension = /\.([a-z0-9]{1,8})$/i.exec(file.name)?.[1]?.toUpperCase() ?? "File";
+  const identity = (
+    <>
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/60">
+        <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium group-hover/file:underline">
+          {file.name}
+        </span>
+        <span className="block text-xs text-muted-foreground tabular-nums">
+          {extension} · {formatBytes(file.sizeBytes)}
+        </span>
+      </span>
+    </>
+  );
+  return (
+    <div className="flex w-64 max-w-full items-center gap-1 rounded-2xl bg-message py-2 ps-2 pe-1 text-message-foreground">
+      {file.downloadable === false ? (
+        <div className="flex min-w-0 flex-1 items-center gap-3">{identity}</div>
+      ) : (
+        <>
+          <button
+            type="button"
+            aria-label={`Preview ${file.name}`}
+            onClick={() => ctx.onFileOpen(file)}
+            className="group/file focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
+          >
+            {identity}
+          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`Download ${file.name}`}
+                  onClick={() => ctx.onFileDownload(file)}
+                />
+              }
+            >
+              <DownloadIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Download {file.name}</TooltipPopup>
+          </Tooltip>
+        </>
+      )}
+    </div>
+  );
+}
 
 function UserVideoAttachment({
   file,
@@ -394,6 +448,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     userVideos.length === 0 &&
     regularImages.length > 1 &&
     regularImages.every((image) => image.source?.kind !== "snap-shot");
+  // Files sent without words show as cards, not as a bubble around a name chip.
+  const fileCardsOnly =
+    !folded &&
+    userMessage.attribution !== "guest" &&
+    otherUserFiles.length > 0 &&
+    regularImages.length + userVideos.length + userAudio.length + unknownAttachments.length === 0 &&
+    replaceComposerContextReferences(resolvedContext.text, (reference) =>
+      reference.kind === "file" ? "" : reference.label,
+    ).trim() === "";
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
     .map((record) => record.contextId);
@@ -695,8 +758,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             BUBBLE_CHIP_CLASS_NAME,
             userMessage.attribution === "guest"
               ? guestBubbleClassName(false)
-              : !mediaOnly && "bg-message",
-            !folded && !mediaOnly && "p-3",
+              : !mediaOnly && !fileCardsOnly && "bg-message",
+            !folded && !mediaOnly && !fileCardsOnly && "p-3",
             folded && expanded && "w-full",
           )}
         >
@@ -749,7 +812,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   ))}
                 </div>
               ) : null}
-              {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
+              {fileCardsOnly ? (
+                <div className="flex flex-col items-end gap-1">
+                  {otherUserFiles.map((file) => (
+                    <UserFileCard key={file.id} file={file} />
+                  ))}
+                </div>
+              ) : null}
+              {!fileCardsOnly && (unchippedFiles.length > 0 || unknownAttachments.length > 0) ? (
                 <div className="mb-2 flex flex-col gap-1">
                   {unchippedFiles.map((file) => {
                     const fileIdentity = (
@@ -814,15 +884,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   ))}
                 </div>
               ) : null}
-              <div onCopyCapture={onBodyCopyCapture}>
-                <CollapsibleUserMessageBody
-                  text={resolvedContext.text}
-                  renderContextReference={renderContextReference}
-                  skills={ctx.skills}
-                  markdownCwd={ctx.markdownCwd}
-                  collapsible={!folded}
-                />
-              </div>
+              {fileCardsOnly ? null : (
+                <div onCopyCapture={onBodyCopyCapture}>
+                  <CollapsibleUserMessageBody
+                    text={resolvedContext.text}
+                    renderContextReference={renderContextReference}
+                    skills={ctx.skills}
+                    markdownCwd={ctx.markdownCwd}
+                    collapsible={!folded}
+                  />
+                </div>
+              )}
             </div>
           ) : null}
         </div>
