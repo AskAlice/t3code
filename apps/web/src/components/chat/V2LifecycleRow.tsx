@@ -48,6 +48,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import {
   applyProviderInstanceSettings,
+  deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
@@ -255,16 +256,21 @@ function SubagentAvatar({
   );
 }
 
-// Same entries and badge rule as the handoff row.
+// Same entries and badge rule as the sidebar row.
 function subagentProviderBadge(
+  environmentId: EnvironmentId,
   providers: ReadonlyArray<ServerProvider> | null | undefined,
   settings: ServerSettings | null,
   instanceId: ProviderInstanceId,
 ) {
-  const derived = deriveProviderInstanceEntries(providers ?? EMPTY_SERVER_PROVIDERS);
-  const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
-  const entry = entries.find((candidate) => candidate.instanceId === instanceId);
-  return entry !== undefined && shouldShowInstanceBadge(entry, entries) ? entry : undefined;
+  const scoped = providers ?? EMPTY_SERVER_PROVIDERS;
+  const entries = deriveProviderEntriesByEnvironment([
+    settings ? [environmentId, scoped, settings] : [environmentId, scoped],
+  ]).get(environmentId);
+  const entry = entries?.get(instanceId);
+  return entry !== undefined && shouldShowInstanceBadge(entry, entries?.values() ?? [])
+    ? entry
+    : undefined;
 }
 
 // Select primitives; status pushes replace providers even when avatar fields are unchanged.
@@ -303,11 +309,15 @@ export function EnvironmentSubagentAvatar({
   );
   const badgeLabel = useAtomValue(
     providersAtom,
-    (providers) => subagentProviderBadge(providers, settings, providerInstanceId)?.displayName,
+    (providers) =>
+      subagentProviderBadge(providerEnvironmentId, providers, settings, providerInstanceId)
+        ?.displayName,
   );
   const accentColor = useAtomValue(
     providersAtom,
-    (providers) => subagentProviderBadge(providers, settings, providerInstanceId)?.accentColor,
+    (providers) =>
+      subagentProviderBadge(providerEnvironmentId, providers, settings, providerInstanceId)
+        ?.accentColor,
   );
   return (
     <SubagentAvatar
