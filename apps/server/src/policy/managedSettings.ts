@@ -25,6 +25,16 @@ const UNMANAGEABLE_KEYS: ReadonlySet<string> = new Set([
   "projectScriptOverrides",
 ]);
 
+/**
+ * Settings another one overrides when it is set: `idleCompaction` wins over the legacy switch, and
+ * `worktreeCleanup`, also per project, over the worktree rules in `storageCleanup`. A lock on the
+ * first alone would look enforced without being, so the second must be locked too.
+ */
+const OVERRIDDEN_BY: ReadonlyArray<readonly [overridden: string, by: string]> = [
+  ["compactIdleThreads", "idleCompaction"],
+  ["storageCleanup.worktree", "worktreeCleanup"],
+];
+
 type Segments = ReadonlyArray<string>;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -124,9 +134,18 @@ export interface ManagedSettings {
     | { readonly _tag: "Allowed"; readonly settings: ServerSettings }
     | { readonly _tag: "Locked"; readonly path: string };
   readonly lockedPaths: ReadonlyArray<string>;
+  /**
+   * Put back into a stripped settings file the values `stored`, the file before this write, held
+   * at paths the policy defaults: equal to the policy's default, they are still the user's choice.
+   * Undefined without policy defaults, so writers can skip reading the file.
+   */
+  readonly keepStored:
+    | ((stripped: unknown, settings: ServerSettings, stored: unknown) => unknown)
+    | undefined;
 }
 
 export const unmanagedSettings: ManagedSettings = {
+  keepStored: undefined,
   withDefaults: (persisted) => persisted,
   defaults: DEFAULT_SERVER_SETTINGS,
   applyLocks: (settings) => settings,
@@ -213,6 +232,20 @@ export function makeManagedSettings(
       return { _tag: "Invalid", reason: `"${path}" is not a setting this version can manage` };
     }
     (setting.locked ? locks : defaults).push({ path, segments, value: setting.value });
+  }
+
+  for (const lock of locks) {
+    const unheld = OVERRIDDEN_BY.find(
+      ([overridden, by]) =>
+        (lock.path.startsWith(overridden) || overridden.startsWith(`${lock.path}.`)) &&
+        !locks.some((other) => other.path === by),
+    );
+    if (unheld !== undefined) {
+      return {
+        _tag: "Invalid",
+        reason: `"${lock.path}" can be overridden by "${unheld[1]}"; lock "${unheld[1]}" too`,
+      };
+    }
   }
 
   // Apply every entry to the built-in defaults at once, and read each value back: a typo in a
@@ -348,9 +381,25 @@ export function makeManagedSettings(
     return { _tag: "Allowed", settings: decodeSettings(kept) };
   };
 
+  const keepStored: ManagedSettings["keepStored"] =
+    defaults.length === 0
+      ? undefined
+      : (stripped, settings, stored) => {
+          const encoded = encodeSettings(settings);
+          return defaults.reduce<unknown>((tree, entry) => {
+            const previous = getPath(stored, entry.segments);
+            return previous !== undefined &&
+              getPath(tree, entry.segments) === undefined &&
+              jsonEqual(previous, getPath(encoded, entry.segments))
+              ? setPath(tree, entry.segments, getPath(settings, entry.segments))
+              : tree;
+          }, stripped);
+        };
+
   return {
     _tag: "Valid",
     settings: {
+      keepStored,
       withDefaults: (persisted) => fillMissing(persisted, defaultsTree),
       defaults: decodeSettings(
         defaults.reduce<unknown>(

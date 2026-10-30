@@ -649,10 +649,20 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // The file before this write, parsed; only read when policy defaults need it.
+  const readStoredSettings = Effect.gen(function* () {
+    if (!(yield* readConfigExists)) return undefined;
+    const parsed = decodeSettingsFileJsonExit(yield* readRawConfig);
+    return Exit.isSuccess(parsed) ? parsed.value : undefined;
+  });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
+      const stripped = stripDefaultServerSettings(settings, managed.defaults) ?? {};
       const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, managed.defaults) ?? {},
+        managed.keepStored === undefined
+          ? stripped
+          : managed.keepStored(stripped, settings, yield* readStoredSettings),
       );
 
       return yield* writeFileStringAtomically({

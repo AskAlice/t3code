@@ -105,6 +105,15 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             ...base,
             settings: { "defaultModelSelection.model": { value: "gpt-5.4", locked: true } },
           }),
+          // Each would look locked while the setting that overrides it stays the user's.
+          JSON.stringify({
+            ...base,
+            settings: { compactIdleThreads: { value: false, locked: true } },
+          }),
+          JSON.stringify({
+            ...base,
+            settings: { "storageCleanup.worktreeAfterDays": { value: 7, locked: true } },
+          }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -112,11 +121,13 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 9);
+      assert.lengthOf(reasons, 11);
       assert.include(reasons[3], "storageCleanup.logsAfterDayz");
       assert.include(reasons[6], "adds entries users could not remove");
       assert.include(reasons[7], "adds entries users could not remove");
       assert.include(reasons[8], 'manage "defaultModelSelection" as a whole');
+      assert.include(reasons[9], 'lock "idleCompaction" too');
+      assert.include(reasons[10], 'lock "worktreeCleanup" too');
     }),
   );
 

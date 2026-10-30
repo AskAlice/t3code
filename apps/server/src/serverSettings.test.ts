@@ -1963,6 +1963,21 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
     }).pipe(Effect.provide(layerServerSettings(policy))),
   );
 
+  it.effect("keeps a stored value that equals a policy default through unrelated writes", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({ defaultRuntimeMode: "approval-required" }),
+      );
+
+      yield* service.updateSettings({ defaultAutoPull: true });
+      assert.include(yield* fs.readFileString(config.settingsPath), '"approval-required"');
+    }).pipe(Effect.provide(layerServerSettings(policy))),
+  );
+
   it.effect("lays locks over the user's own and per-project values without persisting them", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
