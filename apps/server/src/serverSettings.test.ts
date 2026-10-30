@@ -1978,7 +1978,7 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
     }).pipe(Effect.provide(layerServerSettings(policy))),
   );
 
-  it.effect("keeps stored fields inside a setting the policy defaults as a whole", () =>
+  it.effect("keeps stored values under whole-object policy defaults, and only the user's", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
       const config = yield* ServerConfig.ServerConfig;
@@ -1987,6 +1987,7 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
         ...DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
         model: "managed",
       };
+      const chosenModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-mini" };
       yield* fs.writeFileString(
         config.settingsPath,
         JSON.stringify({
@@ -1995,11 +1996,15 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
         }),
       );
 
-      yield* service.updateSettings({ defaultAutoPull: true });
+      // Picking another model on the policy's instance differs from the policy in one field only.
+      yield* service.updateSettings({ defaultAutoPull: true, defaultModelSelection: chosenModel });
       const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
       assert.deepEqual(stored.storageCleanup, { logsAfterDays: 30, browserArtifactsAfterDays: 7 });
-      // A model selection is saved whole, never as the one field the policy defaults.
+      // Model selections are saved whole, never as the fields that differ from the policy's.
       assert.deepEqual(stored.textGenerationModelSelection, selection);
+      assert.deepEqual(stored.defaultModelSelection, chosenModel);
+      // The switch the server derives from the policy's idle compaction stays out of the file.
+      assert.notProperty(stored, "compactIdleThreads");
     }).pipe(
       Effect.provide(
         layerServerSettings({
@@ -2011,6 +2016,11 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
               locked: false,
             },
             "textGenerationModelSelection.model": { value: "managed", locked: false },
+            defaultModelSelection: {
+              value: { instanceId: "codex", model: "gpt-managed" },
+              locked: false,
+            },
+            idleCompaction: { value: "beforeCacheExpires", locked: false },
           },
         }),
       ),

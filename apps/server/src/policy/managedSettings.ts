@@ -1,6 +1,5 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  globalIdleCompaction,
   isRuntimeModeAbove,
   type ManagedPolicySetting,
   ProjectSettingsOverrides,
@@ -42,6 +41,15 @@ const OVERRIDDEN_BY: ReadonlyArray<readonly [overridden: string, by: string]> = 
 ];
 
 type Segments = ReadonlyArray<string>;
+
+/**
+ * The server derives the legacy switch from `idleCompaction` on every write, and shipped clients
+ * still read it, so values the policy sets carry the matching switch.
+ */
+const syncIdleCompaction = (settings: ServerSettings): ServerSettings =>
+  settings.idleCompaction === undefined
+    ? settings
+    : withIdleCompaction(settings, settings.idleCompaction);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -357,10 +365,7 @@ export function makeManagedSettings(
               encodeSettings(current),
             ),
           );
-    // Shipped clients still read the legacy switch, which must follow a locked idleCompaction.
-    const derived = idleCompactionLocked
-      ? withIdleCompaction(locked, globalIdleCompaction(locked))
-      : locked;
+    const derived = idleCompactionLocked ? syncIdleCompaction(locked) : locked;
     const result =
       maxRuntimeMode === undefined ? derived : clampDefaultRuntimeModes(derived, maxRuntimeMode);
     lockCache.set(current, result);
@@ -439,10 +444,12 @@ export function makeManagedSettings(
     settings: {
       keepStored,
       withDefaults: (persisted) => fillMissing(persisted, defaultsTree),
-      defaults: decodeSettings(
-        defaults.reduce<unknown>(
-          (tree, entry) => setPath(tree, entry.segments, entry.value),
-          builtIn,
+      defaults: syncIdleCompaction(
+        decodeSettings(
+          defaults.reduce<unknown>(
+            (tree, entry) => setPath(tree, entry.segments, entry.value),
+            builtIn,
+          ),
         ),
       ),
       applyLocks,
