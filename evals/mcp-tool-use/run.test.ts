@@ -381,10 +381,7 @@ it("rejects partial WebMCP results from an unexpectedly terminated replay", () =
       ...(code === undefined ? {} : { error: Object.assign(new Error(code), { code }) }),
     });
     assert.throws(
-      () =>
-        executeWebMcp([["1"]], "https://acme.dev", [
-          { name: "list_notes", description: "List notes." },
-        ]),
+      () => executeWebMcp([["1"]], "https://acme.dev", [{ name: "list_notes" }]),
       /WebMCP replay terminated|ETIMEDOUT|ENOBUFS/,
     );
   }
