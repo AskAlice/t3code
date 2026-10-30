@@ -199,6 +199,18 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(target.scope, "environment")).toBe(true);
   });
 
+  it("finds the fallback model row outside project scopes", () => {
+    for (const query of ["fallback agent", "fallback", "fallback model"]) {
+      expect(searchSettings(query)[0]).toMatchObject({
+        id: "fallback-model",
+        to: "/settings/threads",
+      });
+    }
+    const target = getSettingsSearchTargetScope("fallback-model")!;
+    expect(isSettingsSearchScopeAvailable(target.scope, "environment")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(target.scope, "project")).toBe(false);
+  });
+
   it("keeps environment-wide settings out of project scopes", () => {
     const updates = getSettingsSearchTargetScope("provider-update-checks")!;
     expect(updates.scope).toBe("environment-defaults");
