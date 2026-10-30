@@ -235,140 +235,139 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(
-        ({ run, text, attachments, context, message, steerRejectionReason }, index) => {
-          const controls = resolveThreadQueueRowControls({
-            busy: busyRunId !== null,
-            canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
-            canSendNow: workflow?.canSendNow ?? false,
-            editBlocked: editBlockedReason !== null,
-            isEditing: editing?.runId === run.id,
-            isGuestMessage: context?.guest !== undefined,
-            steerRejectionReason,
-            promoteSkipsCompaction: workflow?.promoteSkipsCompaction ?? false,
-            text,
-          });
-          const title =
-            controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
-          return (
-            <View key={run.id} className="flex-row items-center border-b border-border bg-sheet">
-              <QueueRowSwipeable
-                enabled={busyRunId === null && controls.canDismiss}
-                background={theme["--color-sheet"]}
-                onRemove={() => void act(run.id, "remove")}
-              >
-                <View className="flex-row items-center">
-                  <Menu
-                    accessibilityLabel={`Actions for queued message ${index + 1}`}
-                    shouldOpenOnLongPress
-                    style={{ flex: 1 }}
-                    actions={[
-                      ...(workflow?.canPromoteToSteer || workflow?.canSendNow
-                        ? [
-                            {
-                              id: "steer",
-                              title: "Send now",
-                              ...(!workflow?.canSendNow &&
-                              !workflow?.promoteSkipsCompaction &&
-                              steerRejectionReason
-                                ? { subtitle: steerRejectionReason }
-                                : {}),
-                              attributes: { disabled: !controls.canSend },
-                              image: Platform.OS === "ios" ? "arrow.up" : "arrow_upward",
-                            },
-                          ]
-                        : []),
-                      {
-                        id: "edit",
-                        title: "Edit",
-                        attributes: { disabled: !controls.canEdit },
-                        image: Platform.OS === "ios" ? "pencil" : "edit",
-                      },
-                      {
-                        id: "remove",
-                        title: "Remove",
-                        attributes: { disabled: !controls.canDismiss, destructive: true },
-                      },
-                    ]}
-                    onPressAction={({ nativeEvent }) =>
-                      void act(run.id, nativeEvent.event as QueueAction)
+      {queuedRuns.map((item, index) => {
+        const { run, text, attachments, context, message, steerRejectionReason } = item;
+        const controls = resolveThreadQueueRowControls({
+          busy: busyRunId !== null,
+          canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
+          canSendNow: workflow?.canSendNow ?? false,
+          editBlocked: editBlockedReason !== null,
+          isEditing: editing?.runId === run.id,
+          isGuestMessage: context?.guest !== undefined,
+          steerRejectionReason,
+          promoteSkipsCompaction: workflow?.promoteSkipsCompaction ?? false,
+          text,
+        });
+        const title =
+          controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
+        return (
+          <View key={run.id} className="flex-row items-center border-b border-border bg-sheet">
+            <QueueRowSwipeable
+              enabled={busyRunId === null && controls.canDismiss}
+              background={theme["--color-sheet"]}
+              onRemove={() => void act(run.id, "remove")}
+            >
+              <View className="flex-row items-center">
+                <Menu
+                  accessibilityLabel={`Actions for queued message ${index + 1}`}
+                  shouldOpenOnLongPress
+                  style={{ flex: 1 }}
+                  actions={[
+                    ...(workflow?.canPromoteToSteer || workflow?.canSendNow
+                      ? [
+                          {
+                            id: "steer",
+                            title: "Send now",
+                            ...(!workflow?.canSendNow &&
+                            !workflow?.promoteSkipsCompaction &&
+                            steerRejectionReason
+                              ? { subtitle: steerRejectionReason }
+                              : {}),
+                            attributes: { disabled: !controls.canSend },
+                            image: Platform.OS === "ios" ? "arrow.up" : "arrow_upward",
+                          },
+                        ]
+                      : []),
+                    {
+                      id: "edit",
+                      title: "Edit",
+                      attributes: { disabled: !controls.canEdit },
+                      image: Platform.OS === "ios" ? "pencil" : "edit",
+                    },
+                    {
+                      id: "remove",
+                      title: "Remove",
+                      attributes: { disabled: !controls.canDismiss, destructive: true },
+                    },
+                  ]}
+                  onPressAction={({ nativeEvent }) =>
+                    void act(run.id, nativeEvent.event as QueueAction)
+                  }
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={title}
+                    accessibilityHint={
+                      controls.canEdit
+                        ? "Opens this message in the composer for editing"
+                        : (editBlockedReason ?? undefined)
                     }
+                    disabled={!controls.canEdit}
+                    onPress={() => void act(run.id, "edit")}
+                    className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
                   >
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={title}
-                      accessibilityHint={
-                        controls.canEdit
-                          ? "Opens this message in the composer for editing"
-                          : (editBlockedReason ?? undefined)
-                      }
-                      disabled={!controls.canEdit}
-                      onPress={() => void act(run.id, "edit")}
-                      className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
-                    >
-                      <QueueAttachmentThumbnails
-                        environmentId={target.environmentId}
-                        attachments={attachments}
-                      />
-                      <View className="min-w-0 flex-1 gap-0.5">
-                        {message ? (
-                          <QueuedRunSender environmentId={target.environmentId} message={message} />
-                        ) : null}
-                        <Text
-                          className={
-                            controls.isEditing
-                              ? "text-sm text-foreground-muted"
-                              : "text-sm text-foreground"
-                          }
-                          numberOfLines={1}
-                        >
-                          {context?.guest === undefined ? null : (
-                            <Text className="font-t3-medium text-adaptive-fuchsia-600-300">
-                              {`${context.guest.name}  `}
-                            </Text>
-                          )}
-                          {title}
-                        </Text>
-                      </View>
-                      {controls.isEditing ? (
-                        <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
-                          Editing
-                        </Text>
+                    <QueueAttachmentThumbnails
+                      environmentId={target.environmentId}
+                      attachments={attachments}
+                    />
+                    <View className="min-w-0 flex-1 gap-0.5">
+                      {message ? (
+                        <QueuedRunSender environmentId={target.environmentId} message={message} />
                       ) : null}
-                    </Pressable>
-                  </Menu>
-                  {workflow?.canPromoteToSteer || workflow?.canSendNow ? (
-                    // Outside the edit row and full row height, so a near miss never opens the editor.
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Send now, queued message ${index + 1}`}
-                      {...(!workflow?.canSendNow &&
-                      !workflow?.promoteSkipsCompaction &&
-                      steerRejectionReason
-                        ? { accessibilityHint: steerRejectionReason }
-                        : {})}
-                      disabled={!controls.canSend}
-                      onPress={() => void act(run.id, "steer")}
-                      className="shrink-0 justify-center self-stretch pl-4 active:opacity-70 disabled:opacity-40"
-                    >
-                      <View className="min-h-9 flex-row items-center gap-1.5 rounded-full bg-primary px-4">
-                        <SymbolView
-                          name="arrow.up"
-                          size={13}
-                          tintColorClassName="accent-primary-foreground"
-                        />
-                        <Text className="font-t3-medium text-sm text-primary-foreground">
-                          Send now
-                        </Text>
-                      </View>
-                    </Pressable>
-                  ) : null}
-                </View>
-              </QueueRowSwipeable>
-            </View>
-          );
-        },
-      )}
+                      <Text
+                        className={
+                          controls.isEditing
+                            ? "text-sm text-foreground-muted"
+                            : "text-sm text-foreground"
+                        }
+                        numberOfLines={1}
+                      >
+                        {context?.guest === undefined ? null : (
+                          <Text className="font-t3-medium text-adaptive-fuchsia-600-300">
+                            {`${context.guest.name}  `}
+                          </Text>
+                        )}
+                        {title}
+                      </Text>
+                    </View>
+                    {controls.isEditing ? (
+                      <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
+                        Editing
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                </Menu>
+                {workflow?.canPromoteToSteer || workflow?.canSendNow ? (
+                  // Outside the edit row and full row height, so a near miss never opens the editor.
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Send now, queued message ${index + 1}`}
+                    {...(!workflow?.canSendNow &&
+                    !workflow?.promoteSkipsCompaction &&
+                    steerRejectionReason
+                      ? { accessibilityHint: steerRejectionReason }
+                      : {})}
+                    disabled={!controls.canSend}
+                    onPress={() => void act(run.id, "steer")}
+                    className="shrink-0 justify-center self-stretch pl-4 active:opacity-70 disabled:opacity-40"
+                  >
+                    <View className="min-h-9 flex-row items-center gap-1.5 rounded-full bg-primary px-4">
+                      <SymbolView
+                        name="arrow.up"
+                        size={13}
+                        tintColorClassName="accent-primary-foreground"
+                      />
+                      <Text className="font-t3-medium text-sm text-primary-foreground">
+                        Send now
+                      </Text>
+                    </View>
+                  </Pressable>
+                ) : null}
+              </View>
+            </QueueRowSwipeable>
+          </View>
+        );
+      })}
     </ScrollView>
   );
 
