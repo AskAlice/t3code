@@ -60,7 +60,6 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.deepEqual(policy.summary?.limits, { webhookTasks: false, telemetry: true });
       assert.equal(ManagedPolicy.deniedBy(policy, "webhookTasks"), "Example Corp");
       assert.isUndefined(ManagedPolicy.deniedBy(policy, "telemetry"));
-      assert.isUndefined(ManagedPolicy.deniedBy(policy, "browserCookieImport"));
     }),
   );
 

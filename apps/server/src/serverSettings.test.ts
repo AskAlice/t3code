@@ -2214,6 +2214,12 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
         })
         .pipe(Effect.flip);
       assert.equal(refused.managedSetting, "providerInstances.codex_new.config.setupMode");
+      // Adding a Codex instance sends the default setup, which leaves the pin in charge.
+      yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId: ProviderInstanceId.make("codex_cli"),
+        instance: { driver: codex, config: { setupMode: "existing" } },
+      });
     }).pipe(
       Effect.provide(
         layerServerSettings({
