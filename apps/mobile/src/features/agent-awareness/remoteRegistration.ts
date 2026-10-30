@@ -651,13 +651,16 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     input.preferencesOverride,
   );
   if (expectedGeneration !== deviceRegistrationGeneration) return;
-  if (relayTokenProvider && relayTokenProviderIdentity) {
-    configureAndroidAgentNotifications(
-      deviceId,
-      relayTokenProviderIdentity,
-      preferences.liveActivitiesEnabled !== false,
-    );
-  }
+  const configureAndroid = (registered: Preferences) => {
+    if (relayTokenProvider && relayTokenProviderIdentity) {
+      configureAndroidAgentNotifications(
+        deviceId,
+        relayTokenProviderIdentity,
+        registered.liveActivitiesEnabled !== false,
+      );
+    }
+  };
+  configureAndroid(preferences);
   const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken);
   const bundleId =
     Platform.OS === "android"
@@ -682,6 +685,15 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       preferences,
     }),
     expectedGeneration,
+  ).pipe(
+    // A rejected preference change must not stay applied natively while the relay keeps the old one.
+    Effect.onError(() =>
+      Effect.sync(() => {
+        if (expectedGeneration === deviceRegistrationGeneration) {
+          configureAndroid(storedPreferences);
+        }
+      }),
+    ),
   );
 });
 

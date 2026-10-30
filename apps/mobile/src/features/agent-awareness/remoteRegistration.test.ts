@@ -656,8 +656,13 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
     },
   );
-  it.effect("enables Live Activity updates over a stored disabled preference", () => {
-    const requests: Array<{ readonly url: string; readonly body: unknown }> = [];
+  it.effect("keeps Android activity off when the relay rejects turning it on", () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
+      type: "android",
+      data: "fcm-token",
+    });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       if (request.url.endsWith("/v1/client/dpop-token")) {
@@ -669,28 +674,22 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           scope: "mobile:registration",
         });
       }
-      requests.push({ url: request.url, body: await request.json() });
-      return Response.json({ ok: true });
+      return new Response("Service unavailable", { status: 503 });
     });
     Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
     setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk"), "user-a");
 
     return Effect.gen(function* () {
-      yield* runBackgroundOperations();
-      requests.length = 0;
-
       const exit = yield* Effect.exit(
         updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true }),
       );
 
-      expect(exit).toStrictEqual(Exit.void);
-      expect(requests).toMatchObject([
-        {
-          url: "https://relay.example.test/v1/mobile/devices",
-          body: { preferences: { liveActivitiesEnabled: true } },
-        },
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(vi.mocked(configureAndroidAgentNotifications).mock.lastCall).toEqual([
+        expect.any(String),
+        "user-a",
+        false,
       ]);
-      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
     }).pipe(
       Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
       Effect.provide(layerRelayTest),
