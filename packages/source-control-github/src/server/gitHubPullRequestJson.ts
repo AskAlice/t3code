@@ -42,6 +42,7 @@ import type * as GitHubSchema from "../../schema/github.graphql.ts";
 import type {
   PullRequestSummaryRepositoryPullRequestPullRequest as SummarizedPullRequest,
   PullRequestWatchFingerprintRepositoryPullRequestPullRequest as WatchedPullRequest,
+  PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitCommit as WatchedPullRequestCommit,
 } from "./pullRequestBatches.graphql.ts";
 import {
   PageInfo as ListingPageInfo,
@@ -120,6 +121,8 @@ interface LatestReviewFields {
 
 /** Check runs use status/conclusion; commit statuses use a single state. */
 interface CheckFields {
+  /** A check run's id; absent for commit statuses. */
+  readonly databaseId?: number | null | undefined;
   readonly name?: string | null | undefined;
   readonly context?: string | null | undefined;
   readonly status?: string | null | undefined;
@@ -206,6 +209,21 @@ const RawWorkflowRunsSchema = Schema.Struct({
     Schema.Struct({
       id: Schema.Int,
       name: Schema.optional(Schema.NullOr(Schema.String)),
+      html_url: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
+});
+
+const RawCheckRunsSchema = Schema.Struct({
+  check_runs: Schema.Array(
+    Schema.Struct({
+      id: Schema.Int,
+      name: Schema.optional(Schema.NullOr(Schema.String)),
+      status: Schema.optional(Schema.NullOr(Schema.String)),
+      conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+      started_at: Schema.optional(Schema.NullOr(Schema.String)),
+      completed_at: Schema.optional(Schema.NullOr(Schema.String)),
+      details_url: Schema.optional(Schema.NullOr(Schema.String)),
       html_url: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
@@ -758,6 +776,7 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
 
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
+const decodeCheckRuns = decodeJsonResult(RawCheckRunsSchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
 const decodeRow = Schema.decodeUnknownExit(PullRequestRow);
 
@@ -955,10 +974,20 @@ const stateCounts = (counts: StateCounts) =>
     .toSorted()
     .join(",");
 
+const suiteCounts = (suites: WatchedPullRequestCommit["checkSuites"]) => {
+  const counts = new Map<string, number>();
+  for (const suite of nodesOf(suites)) {
+    const state = `${suite.status}/${suite.conclusion ?? ""}`;
+    counts.set(state, (counts.get(state) ?? 0) + 1);
+  }
+  return stateCounts([...counts].map(([state, count]) => ({ state, count })));
+};
+
 export function toPullRequestWatchFingerprint(
   pr: WatchedPullRequest,
 ): GitHubPullRequestWatchFingerprint {
-  const contexts = pr.commits.nodes?.[0]?.commit.statusCheckRollup?.contexts;
+  const commit = pr.commits.nodes?.[0]?.commit;
+  const contexts = commit?.statusCheckRollup?.contexts;
   return {
     status: [
       pr.state,
@@ -966,6 +995,7 @@ export function toPullRequestWatchFingerprint(
       pr.headRefOid,
       stateCounts(contexts?.checkRunCountsByState ?? null),
       stateCounts(contexts?.statusContextCountsByState ?? null),
+      suiteCounts(commit?.checkSuites ?? null),
     ].join(" "),
     remarks: [
       pr.comments.totalCount,
@@ -978,6 +1008,7 @@ export function toPullRequestWatchFingerprint(
 }
 
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
+  readonly checkContexts: ReadonlyArray<GitHubCheckContext>;
   readonly maintainerCanModify: boolean;
   readonly canEditMaintainerEdits: boolean;
   readonly reviewRequestTeams: ReadonlyArray<PullRequestActor>;
@@ -997,7 +1028,9 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
   const pr = repository?.pullRequest;
   if (repository == null || pr == null) return null;
   const contexts = nodesOf(pr.commits)[0]?.commit.statusCheckRollup?.contexts;
+  const checkContexts = toCheckContexts(nodesOf(contexts));
   return {
+    checkContexts,
     reviewRequestTeams: nodesOf(pr.reviewRequests).flatMap(
       ({ requestedReviewer }) => toRequestedTeam(requestedReviewer) ?? [],
     ),
@@ -1022,7 +1055,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
               ],
       ),
       labels: nodesOf(pr.labels),
-      statusCheckRollup: toCheckContexts(nodesOf(contexts)),
+      statusCheckRollup: checkContexts,
     }),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
     maintainerCanModify: pr.maintainerCanModify,
@@ -1180,6 +1213,41 @@ export function pullRequestChecksFromContexts(contexts: ReadonlyArray<GitHubChec
   readonly checksState: PullRequestChecksState | null;
 } {
   return { checks: toChecks(contexts), checksState: rollupChecksState(contexts) };
+}
+
+export interface GitHubCheckRunPage {
+  readonly runs: ReadonlyArray<GitHubCheckContext>;
+  readonly rawCount: number;
+}
+
+export function decodeCheckRunsJson(raw: string): Result.Result<GitHubCheckRunPage, DecodeFailure> {
+  return Result.map(decodeCheckRuns(raw), ({ check_runs }) => ({
+    runs: check_runs.map((run) => ({
+      databaseId: run.id,
+      name: run.name,
+      status: run.status,
+      conclusion: run.conclusion,
+      startedAt: run.started_at,
+      completedAt: run.completed_at,
+      detailsUrl: run.details_url ?? run.html_url,
+    })),
+    rawCount: check_runs.length,
+  }));
+}
+
+/**
+ * The rollup leaves out check runs of workflow runs not attached to the pull request, such as a
+ * workflow_dispatch run on its branch, which the head commit still lists.
+ */
+export function withHeadCheckRuns(
+  pullRequest: Pick<GitHubPullRequestCore, "checkContexts" | "checks" | "checksState">,
+  runs: ReadonlyArray<GitHubCheckContext>,
+): Pick<GitHubPullRequestCore, "checks" | "checksState"> {
+  const listed = new Set(pullRequest.checkContexts.map((context) => context.databaseId));
+  const unlisted = runs.filter((run) => !listed.has(run.databaseId));
+  return unlisted.length === 0
+    ? pullRequest
+    : pullRequestChecksFromContexts([...pullRequest.checkContexts, ...unlisted]);
 }
 
 export interface GitHubReviewThreadComments {

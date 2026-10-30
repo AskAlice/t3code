@@ -60,6 +60,7 @@ import {
   buildReviewerRequest,
   decodeCommitFilesJson,
   pullRequestChecksFromContexts,
+  decodeCheckRunsJson,
   decodeWorkflowRunsJson,
   type GitHubPullRequestCore,
   type GitHubPullRequestFileStat,
@@ -98,6 +99,8 @@ import {
   reviewThreadConversation,
   type GitHubPullRequestActivity,
   type GitHubPullRequestActivityPage,
+  type GitHubCheckContext,
+  type GitHubCheckRunPage,
   type GitHubWorkflowRunPage,
   type GitHubPullRequestHead,
   type GitHubPullRequestListItem,
@@ -492,6 +495,14 @@ export class GitHubPullRequestApi extends Context.Service<
       Omit<PullRequestPreview, "projectId" | "repository">,
       GitHubPullRequestApiError
     >;
+
+    /** A commit's latest check runs, including ones a pull request's rollup leaves out. */
+    readonly listHeadCheckRuns: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly headSha: string;
+    }) => Effect.Effect<ReadonlyArray<GitHubCheckContext>, GitHubPullRequestApiError>;
 
     readonly listWorkflowRunsRequiringApproval: (input: {
       readonly cwd: string;
@@ -1428,6 +1439,7 @@ export const make = Effect.gen(function* () {
                 ),
                 Effect.map((all) => ({
                   ...core,
+                  checkContexts: all.contexts,
                   ...pullRequestChecksFromContexts(all.contexts),
                   checksTruncated: all.truncated,
                 })),
@@ -1437,6 +1449,26 @@ export const make = Effect.gen(function* () {
       ),
     );
   };
+
+  const listHeadCheckRuns: GitHubPullRequestApi["Service"]["listHeadCheckRuns"] = Effect.fn(
+    "GitHubPullRequestApi.listHeadCheckRuns",
+  )(function* (input) {
+    const { owner, name } = parseRepositorySelector(input.repository);
+    const runs: GitHubCheckContext[] = [];
+    for (let page = 1; page <= CHECK_CONTEXT_PAGES; page++) {
+      // Polled with the detail, so revalidate it.
+      const read: GitHubCheckRunPage = yield* revalidatedRestRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "listHeadCheckRuns",
+        path: `repos/${owner}/${name}/commits/${encodeURIComponent(input.headSha)}/check-runs?filter=latest&per_page=100&page=${page}`,
+        decode: decodeCheckRunsJson,
+      });
+      runs.push(...read.runs);
+      if (read.rawCount < 100) break;
+    }
+    return runs;
+  });
 
   const workflowApprovalLimit = 1_000;
   const workflowApprovalReadError = (cwd: string, cause: unknown) =>
@@ -1941,6 +1973,7 @@ export const make = Effect.gen(function* () {
           );
       },
     ),
+    listHeadCheckRuns,
     listWorkflowRunsRequiringApproval,
 
     getPullRequestStack: Effect.fn("GitHubPullRequestApi.getPullRequestStack")(function (input) {

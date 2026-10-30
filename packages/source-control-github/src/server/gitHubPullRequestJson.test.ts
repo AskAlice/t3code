@@ -314,6 +314,7 @@ describe("pull request detail decoding", () => {
         }
       : {
           __typename: "CheckRun",
+          databaseId: null,
           name: "",
           status: "COMPLETED",
           conclusion: null,
@@ -1666,6 +1667,7 @@ describe("pull request watch fingerprints", () => {
                   statusContextCountsByState: null,
                 },
               },
+              checkSuites: { nodes: [] },
             },
           },
         ],

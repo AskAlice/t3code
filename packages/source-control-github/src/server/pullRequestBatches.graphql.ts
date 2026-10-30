@@ -341,10 +341,28 @@ export const PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitS
 })
 export interface PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup extends Schema.Struct.Type<typeof PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup.fields> {}
 
+/** A check suite. */
+export const CheckSuite = Schema.Struct({
+  /** The status of this check suite. */
+  status: GraphQL.enumLiterals(Shared.CheckStatusState.literals),
+  /** The conclusion of this check suite. */
+  conclusion: Schema.NullOr(GraphQL.enumLiterals(Shared.CheckConclusionState.literals))
+})
+export interface CheckSuite extends Schema.Struct.Type<typeof CheckSuite.fields> {}
+
+/** The connection type for CheckSuite. */
+export const CheckSuiteConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(CheckSuite)))
+})
+export interface CheckSuiteConnection extends Schema.Struct.Type<typeof CheckSuiteConnection.fields> {}
+
 /** Represents a Git commit. */
 export const PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitCommit = Schema.Struct({
   /** Check and Status rollup information for this commit. */
-  statusCheckRollup: Schema.NullOr(PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup)
+  statusCheckRollup: Schema.NullOr(PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup),
+  /** The check suites associated with a commit. */
+  checkSuites: Schema.NullOr(CheckSuiteConnection)
 })
 export interface PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitCommit extends Schema.Struct.Type<typeof PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitCommit.fields> {}
 
@@ -397,7 +415,7 @@ export const PullRequestWatchFingerprint = GraphQL.query("PullRequestWatchFinger
       { name: "number", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}checkSuites(last:100){nodes{status conclusion}}}}}}}"] }
     ],
     fragments: []
   },

@@ -519,6 +519,7 @@ const subjectScope = (subjectId: string, pullRequestId: string) => ({
 
 const checkRun = (fields: Record<string, unknown>) => ({
   __typename: "CheckRun",
+  databaseId: null,
   name: "",
   status: "COMPLETED",
   conclusion: null,
@@ -2033,6 +2034,44 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ).toEqual(expect.arrayContaining([["ios", expected]]));
         expect(detail.checksState).toBe(checksState);
       }),
+  );
+
+  it.effect("keeps the rollup's checks when the head commit's check runs are refused", () =>
+    Effect.gen(function* () {
+      const answer = coreResponse({
+        commits: {
+          nodes: [
+            {
+              commit: {
+                statusCheckRollup: {
+                  contexts: {
+                    nodes: [checkRun({ name: "build", conclusion: "SUCCESS" })],
+                    pageInfo: { hasNextPage: false },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+      mockedExecute.mockImplementation((call) =>
+        call.kind === "graphql"
+          ? Effect.succeed(output(encodeJson(answer)))
+          : Effect.fail(
+              new GitHubRequestPolicy.GitHubApiResponseError({
+                host: "github.com",
+                operation: "listHeadCheckRuns",
+                status: 403,
+              }),
+            ),
+      );
+      const provider = yield* GitHubPullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest(pullRequestInput);
+      expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
+        ["build", "success"],
+      ]);
+      expect(detail.checksState).toBe("passing");
+    }),
   );
 
   const branchToDelete = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
