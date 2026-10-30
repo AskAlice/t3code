@@ -253,8 +253,11 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return platform === "win32" || (info.value.mode & 0o111) !== 0;
   });
 
-  const runVersionProbe = (executablePath: string, timeout: Duration.Input) =>
-    spawner
+  const runVersionProbe = Effect.fn("cloudflared.runVersionProbe")(function* (
+    executablePath: string,
+    timeout: Duration.Input,
+  ) {
+    return yield* spawner
       .string(ChildProcess.make(executablePath, ["version"], { stdin: "ignore", stderr: "ignore" }))
       .pipe(
         Effect.map(parseCloudflaredVersionOutput),
@@ -262,6 +265,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         Effect.map(Option.getOrNull),
         Effect.orElseSucceed(() => null),
       );
+  });
 
   // Cache successful version probes per file revision; do not let transient failures hide valid binaries.
   const versionCache = yield* Cache.makeWith(
