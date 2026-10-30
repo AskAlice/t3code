@@ -460,11 +460,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     regularImages.length + userVideos.length > 0;
   const standaloneMedia = mediaOnly || mediaAboveText;
   // A lone image keeps its own shape; a 4:3 crop hides most of a wide screenshot.
-  const loneImage =
-    standaloneMedia &&
-    userVideos.length === 0 &&
-    regularImages.length === 1 &&
-    regularImages[0]!.source?.kind !== "snap-shot";
+  const loneImage = standaloneMedia && userVideos.length === 0 && regularImages.length === 1;
   // Several images share one rounded shape, split by hairlines.
   const collage =
     standaloneMedia &&
@@ -634,9 +630,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               "bg-background/70",
               image.source?.kind === "snap-shot" && image.previewUrl
                 ? cn(
-                    SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
                     "col-span-2",
-                    standaloneMedia && "justify-self-end",
+                    standaloneMedia
+                      ? cn(MEDIA_EDGE_CLASS_NAME, "justify-self-end overflow-hidden rounded-2xl")
+                      : SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
                   )
                 : loneImage
                   ? cn(MEDIA_EDGE_CLASS_NAME, "overflow-hidden rounded-2xl")
@@ -675,10 +672,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   loading="lazy"
                   className={cn(
                     "block transform-gpu",
-                    // A fixed height keeps the row from growing when the image loads.
-                    loneImage
-                      ? "h-48 w-auto min-w-24 max-w-full object-cover"
-                      : "size-full object-cover",
+                    standaloneMedia && image.source?.kind === "snap-shot"
+                      ? "h-auto max-h-48 w-auto min-w-24 max-w-full object-contain"
+                      : loneImage
+                        ? "h-48 w-auto min-w-24 max-w-full object-cover"
+                        : "size-full object-cover",
                   )}
                 />
               </button>
