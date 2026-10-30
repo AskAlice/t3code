@@ -2182,6 +2182,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
         out("session.command", { sessionID: SESSION, name: "hello", text: "WORLD" }),
         reply("session.command", null),
+        out("session.active"),
+        replyData("session.active", { [SESSION]: { type: "running" } }),
         { type: "runtime_exit", status: "success" } as const,
         out("event.subscribe"),
         out("session.active"),
