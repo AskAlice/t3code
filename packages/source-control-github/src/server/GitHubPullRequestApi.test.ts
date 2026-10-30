@@ -519,7 +519,7 @@ const subjectScope = (subjectId: string, pullRequestId: string) => ({
 
 const checkRun = (fields: Record<string, unknown>) => ({
   __typename: "CheckRun",
-  databaseId: null,
+  id: "CR_kwDOAAAAAc8AAAAAAAAAAQ",
   name: "",
   status: "COMPLETED",
   conclusion: null,
@@ -2000,6 +2000,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           check_runs: [
             {
               id: 111101401583,
+              node_id: "CR_kwDOVceCos8AAAAc1SKccw",
               name: "ios",
               head_sha: "abc123",
               status,
@@ -2071,6 +2072,159 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ["build", "success"],
       ]);
       expect(detail.checksState).toBe("passing");
+    }),
+  );
+
+  const readDetailWithHeadRuns = (input: {
+    readonly rollup: ReadonlyArray<Record<string, unknown>>;
+    readonly checkRuns: ReadonlyArray<Record<string, unknown>>;
+    readonly workflowRuns: ReadonlyArray<Record<string, unknown>>;
+  }) =>
+    Effect.gen(function* () {
+      const answer = coreResponse({
+        commits: {
+          nodes: [
+            {
+              commit: {
+                statusCheckRollup: {
+                  contexts: { nodes: input.rollup, pageInfo: { hasNextPage: false } },
+                },
+              },
+            },
+          ],
+        },
+      });
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          output(
+            encodeJson(
+              call.kind === "graphql"
+                ? answer
+                : call.path.startsWith("repos/acme/web/commits/abc123/check-runs")
+                  ? { total_count: input.checkRuns.length, check_runs: input.checkRuns }
+                  : call.path.startsWith("repos/acme/web/actions/runs?head_sha=abc123")
+                    ? { total_count: input.workflowRuns.length, workflow_runs: input.workflowRuns }
+                    : {},
+            ),
+          ),
+        ),
+      );
+      const provider = yield* GitHubPullRequestProvider.make;
+      return yield* provider.getChangeRequest(pullRequestInput);
+    });
+  const restCheckRun = (fields: {
+    readonly id: number;
+    readonly suite: number;
+    readonly status: string;
+    readonly conclusion: string | null;
+    readonly completedAt: string | null;
+  }) => ({
+    id: fields.id,
+    node_id: `CR_kwDOVceCos8AAAAc${fields.id.toString(36)}`,
+    name: "build",
+    head_sha: "abc123",
+    status: fields.status,
+    conclusion: fields.conclusion,
+    started_at: "2026-07-02T00:01:00Z",
+    completed_at: fields.completedAt,
+    details_url: `https://github.com/acme/web/actions/runs/1/job/${fields.id}`,
+    app: { slug: "github-actions" },
+    check_suite: { id: fields.suite },
+  });
+
+  // regression: #27307 GitHub check run ids exceed int32
+  it.effect("lists a rollup check run the head commit also reports once", () =>
+    Effect.gen(function* () {
+      const run = restCheckRun({
+        id: 123838742973,
+        suite: 111101401583,
+        status: "completed",
+        conclusion: "success",
+        completedAt: "2026-07-02T00:05:00Z",
+      });
+      const detail = yield* readDetailWithHeadRuns({
+        rollup: [
+          checkRun({
+            id: run.node_id,
+            name: "build",
+            conclusion: "SUCCESS",
+            completedAt: "2026-07-02T00:05:00Z",
+            isRequired: true,
+            checkSuite: { workflowRun: { workflow: { name: "ci" } } },
+          }),
+        ],
+        checkRuns: [run],
+        workflowRuns: [],
+      });
+      expect(detail.checks.map(({ name, status, required }) => [name, status, required])).toEqual([
+        ["build", "success", true],
+      ]);
+    }),
+  );
+
+  // regression: #27307 dispatched workflows can share job names
+  it.effect("tells apart same-named jobs of workflows the status rollup leaves out", () =>
+    Effect.gen(function* () {
+      const detail = yield* readDetailWithHeadRuns({
+        rollup: [],
+        checkRuns: [
+          restCheckRun({
+            id: 123838742973,
+            suite: 111101401583,
+            status: "completed",
+            conclusion: "failure",
+            completedAt: "2026-07-02T00:05:00Z",
+          }),
+          restCheckRun({
+            id: 123838742990,
+            suite: 111101401590,
+            status: "completed",
+            conclusion: "success",
+            completedAt: "2026-07-02T00:09:00Z",
+          }),
+        ],
+        workflowRuns: [
+          { id: 40985324514, name: "ios", check_suite_id: 111101401583 },
+          { id: 40985324520, name: "android", check_suite_id: 111101401590 },
+        ],
+      });
+      expect(detail.checks.map((check) => [check.name, check.status])).toEqual(
+        expect.arrayContaining([
+          ["ios / build", "failure"],
+          ["android / build", "success"],
+        ]),
+      );
+      expect(detail.checksState).toBe("failing");
+    }),
+  );
+
+  // regression: #27307 a dispatched rerun of a workflow the rollup lists
+  it.effect("shows a dispatched rerun of a rollup check as that check", () =>
+    Effect.gen(function* () {
+      const detail = yield* readDetailWithHeadRuns({
+        rollup: [
+          checkRun({
+            name: "build",
+            conclusion: "SUCCESS",
+            completedAt: "2026-07-02T00:05:00Z",
+            checkSuite: { workflowRun: { workflow: { name: "ci" } } },
+          }),
+        ],
+        checkRuns: [
+          restCheckRun({
+            id: 123838742990,
+            suite: 111101401590,
+            status: "in_progress",
+            conclusion: null,
+            completedAt: null,
+          }),
+        ],
+        workflowRuns: [{ id: 40985324520, name: "ci", check_suite_id: 111101401590 }],
+      });
+      expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
+        ["build", "pending"],
+      ]);
+      expect(detail.checksState).toBe("pending");
     }),
   );
 

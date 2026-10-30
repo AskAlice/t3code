@@ -25,6 +25,7 @@ import {
   type ProviderRepositoryRef,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import {
+  unlistedCheckRuns,
   withHeadCheckRuns,
   type GitHubPullRequestCore,
   type GitHubRepositoryAccess,
@@ -324,16 +325,29 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<
     Pick<GitHubPullRequestCore, "checks" | "checksState">,
     GitHubPullRequestApi.GitHubPullRequestApiError
-  > =>
-    pullRequest.state !== "open" || pullRequest.headSha == null
-      ? Effect.succeed(pullRequest)
-      : cli.listHeadCheckRuns({ ...input, headSha: pullRequest.headSha }).pipe(
-          Effect.map((runs) => withHeadCheckRuns(pullRequest, runs)),
-          Effect.catchIf(
-            (error) => !isRateLimited(error),
-            () => Effect.succeed(pullRequest),
-          ),
-        );
+  > => {
+    const headSha = pullRequest.headSha;
+    if (pullRequest.state !== "open" || headSha == null) return Effect.succeed(pullRequest);
+    const head = { ...input, headSha };
+    return cli.listHeadCheckRuns(head).pipe(
+      Effect.flatMap((runs) => {
+        const unlisted = unlistedCheckRuns(pullRequest, runs);
+        return unlisted.length === 0
+          ? Effect.succeed(pullRequest)
+          : cli.listHeadWorkflowNames(head).pipe(
+              Effect.catchIf(
+                (error) => !isRateLimited(error),
+                () => Effect.succeed(new Map<number, string>()),
+              ),
+              Effect.map((names) => withHeadCheckRuns(pullRequest, unlisted, names)),
+            );
+      }),
+      Effect.catchIf(
+        (error) => !isRateLimited(error),
+        () => Effect.succeed(pullRequest),
+      ),
+    );
+  };
 
   const readChecks = (input: ProviderRepositoryRef & { readonly number: number }) =>
     cli.getPullRequestDetail(input).pipe(

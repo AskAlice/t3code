@@ -314,7 +314,7 @@ describe("pull request detail decoding", () => {
         }
       : {
           __typename: "CheckRun",
-          databaseId: null,
+          id: "CR_kwDOAAAAAc8AAAAAAAAAAQ",
           name: "",
           status: "COMPLETED",
           conclusion: null,

@@ -62,6 +62,7 @@ import {
   pullRequestChecksFromContexts,
   decodeCheckRunsJson,
   decodeWorkflowRunsJson,
+  decodeWorkflowSuitesJson,
   type GitHubPullRequestCore,
   type GitHubPullRequestFileStat,
   type GitHubPullRequestWatchFingerprint,
@@ -99,9 +100,10 @@ import {
   reviewThreadConversation,
   type GitHubPullRequestActivity,
   type GitHubPullRequestActivityPage,
-  type GitHubCheckContext,
+  type GitHubHeadCheckRun,
   type GitHubCheckRunPage,
   type GitHubWorkflowRunPage,
+  type GitHubWorkflowSuitePage,
   type GitHubPullRequestHead,
   type GitHubPullRequestListItem,
   type GitHubPullRequestSearchItem,
@@ -502,7 +504,15 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly repository: string;
       readonly host: string;
       readonly headSha: string;
-    }) => Effect.Effect<ReadonlyArray<GitHubCheckContext>, GitHubPullRequestApiError>;
+    }) => Effect.Effect<ReadonlyArray<GitHubHeadCheckRun>, GitHubPullRequestApiError>;
+
+    /** The workflow name of each Actions check suite on a commit. */
+    readonly listHeadWorkflowNames: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly headSha: string;
+    }) => Effect.Effect<ReadonlyMap<number, string>, GitHubPullRequestApiError>;
 
     readonly listWorkflowRunsRequiringApproval: (input: {
       readonly cwd: string;
@@ -1454,7 +1464,7 @@ export const make = Effect.gen(function* () {
     "GitHubPullRequestApi.listHeadCheckRuns",
   )(function* (input) {
     const { owner, name } = parseRepositorySelector(input.repository);
-    const runs: GitHubCheckContext[] = [];
+    const runs: GitHubHeadCheckRun[] = [];
     for (let page = 1; page <= CHECK_CONTEXT_PAGES; page++) {
       // Polled with the detail, so revalidate it.
       const read: GitHubCheckRunPage = yield* revalidatedRestRead({
@@ -1468,6 +1478,25 @@ export const make = Effect.gen(function* () {
       if (read.rawCount < 100) break;
     }
     return runs;
+  });
+
+  const listHeadWorkflowNames: GitHubPullRequestApi["Service"]["listHeadWorkflowNames"] = Effect.fn(
+    "GitHubPullRequestApi.listHeadWorkflowNames",
+  )(function* (input) {
+    const { owner, name } = parseRepositorySelector(input.repository);
+    const names = new Map<number, string>();
+    for (let page = 1; page <= CHECK_CONTEXT_PAGES; page++) {
+      const read: GitHubWorkflowSuitePage = yield* revalidatedRestRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "listHeadWorkflowNames",
+        path: `repos/${owner}/${name}/actions/runs?head_sha=${encodeURIComponent(input.headSha)}&per_page=100&page=${page}`,
+        decode: decodeWorkflowSuitesJson,
+      });
+      for (const [suite, workflow] of read.workflowNameBySuite) names.set(suite, workflow);
+      if (read.rawCount < 100) break;
+    }
+    return names;
   });
 
   const workflowApprovalLimit = 1_000;
@@ -1974,6 +2003,7 @@ export const make = Effect.gen(function* () {
       },
     ),
     listHeadCheckRuns,
+    listHeadWorkflowNames,
     listWorkflowRunsRequiringApproval,
 
     getPullRequestStack: Effect.fn("GitHubPullRequestApi.getPullRequestStack")(function (input) {

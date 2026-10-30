@@ -33,7 +33,7 @@ fragment CheckContext on StatusCheckRollupContext {
     isRequired(pullRequestNumber: $number) @include(if: $required)
   }
   ... on CheckRun {
-    databaseId
+    id
     name
     status
     conclusion
