@@ -41,72 +41,63 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const [explanationOpen, setExplanationOpen] = useState(false);
   const maxHeight = props.maxHeight;
   const maxHeightStyle = useAnimatedStyle(() => ({ maxHeight: maxHeight.value }));
-  const hasBody = Boolean(
-    props.approval.detail ||
-    props.approval.reason ||
-    props.approval.fullAccessOverride ||
-    !canRespond ||
-    warning,
-  );
   return (
     <Animated.View
       className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
       style={maxHeightStyle}
     >
-      <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-        Approval needed
-      </Text>
-      <Text className="font-t3-bold text-lg text-foreground">
-        {props.approval.appName ?? props.approval.requestKind}
-      </Text>
-      {hasBody ? (
-        <ScrollView
-          bounces={false}
-          className="min-h-0"
-          contentContainerClassName="gap-2.5"
-          nestedScrollEnabled
-          showsVerticalScrollIndicator
-          style={{ flexShrink: 1 }}
-        >
-          {props.approval.detail ? (
-            <Text className="font-sans text-sm leading-normal text-foreground-secondary">
-              {props.approval.detail}
+      <ScrollView
+        bounces={false}
+        className="min-h-0"
+        contentContainerClassName="gap-2.5"
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+        style={{ flexShrink: 1 }}
+      >
+        <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
+          Approval needed
+        </Text>
+        <Text className="font-t3-bold text-lg text-foreground">
+          {props.approval.appName ?? props.approval.requestKind}
+        </Text>
+        {props.approval.detail ? (
+          <Text className="font-sans text-sm leading-normal text-foreground-secondary">
+            {props.approval.detail}
+          </Text>
+        ) : null}
+        {props.approval.reason ? (
+          <Text className="font-sans text-xs leading-normal text-warning-foreground">
+            {props.approval.reason}
+          </Text>
+        ) : null}
+        {props.approval.fullAccessOverride ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: explanationOpen }}
+            onPress={() => setExplanationOpen((open) => !open)}
+          >
+            <Text className="font-t3-bold text-xs text-foreground-secondary underline">
+              {FULL_ACCESS_OVERRIDE_QUESTION}
             </Text>
-          ) : null}
-          {props.approval.reason ? (
-            <Text className="font-sans text-xs leading-normal text-warning-foreground">
-              {props.approval.reason}
-            </Text>
-          ) : null}
-          {props.approval.fullAccessOverride ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ expanded: explanationOpen }}
-              onPress={() => setExplanationOpen((open) => !open)}
-            >
-              <Text className="font-t3-bold text-xs text-foreground-secondary underline">
-                {FULL_ACCESS_OVERRIDE_QUESTION}
+            {explanationOpen ? (
+              <Text className="mt-1 font-sans text-xs leading-normal text-foreground-muted">
+                {fullAccessOverrideExplanation(props.approval.fullAccessOverride)}
               </Text>
-              {explanationOpen ? (
-                <Text className="mt-1 font-sans text-xs leading-normal text-foreground-muted">
-                  {fullAccessOverrideExplanation(props.approval.fullAccessOverride)}
-                </Text>
-              ) : null}
-            </Pressable>
-          ) : null}
-          {!canRespond ? (
-            <Text className="font-sans text-sm leading-5 text-foreground-muted">
-              The provider process for this request is no longer available. Interrupt or restart the
-              run to continue.
-            </Text>
-          ) : null}
-          {warning ? (
-            <Text className="font-sans text-xs leading-normal text-warning-foreground">
-              {warning}
-            </Text>
-          ) : null}
-        </ScrollView>
-      ) : null}
+            ) : null}
+          </Pressable>
+        ) : null}
+        {!canRespond ? (
+          <Text className="font-sans text-sm leading-5 text-foreground-muted">
+            The provider process for this request is no longer available. Interrupt or restart the
+            run to continue.
+          </Text>
+        ) : null}
+        {warning ? (
+          <Text className="font-sans text-xs leading-normal text-warning-foreground">
+            {warning}
+          </Text>
+        ) : null}
+      </ScrollView>
       <View className="flex-row flex-wrap gap-2.5">
         {options.map((option) => (
           <Button

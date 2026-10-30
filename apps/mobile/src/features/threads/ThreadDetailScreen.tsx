@@ -1520,6 +1520,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     >
                       {props.activePendingApproval ? (
                         <PendingApprovalCard
+                          key={props.activePendingApproval.requestId}
                           canOperateThread={props.canOperateThread}
                           approval={props.activePendingApproval}
                           maxHeight={pendingApprovalMaxHeight}
