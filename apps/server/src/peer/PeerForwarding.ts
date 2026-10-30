@@ -147,7 +147,7 @@ const make = Effect.gen(function* () {
     if (access === "read-only" || runtimeModeRank(requested) <= runtimeModeRank(access)) return;
     return yield* new OrchestratorMcpFailure({
       code: "runtime_mode_escalation_denied",
-      message: `Linked environment "${label}" was linked with ${access} access, so work there cannot run in ${requested}. Omit runtimeMode to run it at ${access}, or link it again with broader access.`,
+      message: `Linked environment "${label}" was linked with ${access} access, so work there cannot run in ${requested}. Omit runtimeMode to run it at a mode up to ${access}, or link it again with broader access.`,
     });
   });
 
