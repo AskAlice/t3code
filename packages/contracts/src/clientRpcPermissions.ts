@@ -94,10 +94,18 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
-  // Declining links nothing, so it needs only what stopping the thread does.
-  if (method === WS_METHODS.peerLinksAnswerRequest && isLinkRequestDecline(input))
-    return [AuthOrchestrationOperateScope];
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
     : [];
+}
+
+/** A scope that authorizes the call on its own, in place of its required scopes. */
+export function clientRpcSufficientScope(
+  method: string,
+  input: unknown,
+): AuthEnvironmentScope | undefined {
+  // Declining links nothing, so what stopping the thread needs is enough.
+  return method === WS_METHODS.peerLinksAnswerRequest && isLinkRequestDecline(input)
+    ? AuthOrchestrationOperateScope
+    : undefined;
 }

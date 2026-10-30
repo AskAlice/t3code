@@ -18,6 +18,7 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -312,28 +313,37 @@ it.effect("lets a thread operator decline an environment link request but not an
       ),
     );
     const handled: string[] = [];
-    const client = yield* RpcTest.makeClient(group).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          group.toLayerHandler(WS_METHODS.peerLinksAnswerRequest, ({ answer }) =>
-            Effect.sync(() => {
-              handled.push(answer.type);
-            }),
+    const answerAs = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.peerLinksAnswerRequest, ({ answer }) =>
+              Effect.sync(() => {
+                handled.push(answer.type);
+              }),
+            ),
+            RpcAuthorization.layer(scopes),
           ),
-          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
         ),
-      ),
-    );
+        Effect.map((client) => client[WS_METHODS.peerLinksAnswerRequest]),
+      );
+    const operator = yield* answerAs([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+    const accessManager = yield* answerAs([AuthOrchestrationReadScope, AuthAccessWriteScope]);
+    const reader = yield* answerAs([AuthOrchestrationReadScope]);
     const request = { threadId: ThreadId.make("thread"), turnItemId: TurnItemId.make("item") };
+    const decline = { ...request, answer: { type: "decline" as const } };
     expect(
-      yield* client[WS_METHODS.peerLinksAnswerRequest]({
+      yield* operator({
         ...request,
         answer: { type: "use-existing", environmentId: EnvironmentId.make("buildbox") },
       }).pipe(Effect.flip),
     ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
-    expect(handled).toEqual([]);
-    yield* client[WS_METHODS.peerLinksAnswerRequest]({ ...request, answer: { type: "decline" } });
-    expect(handled).toEqual(["decline"]);
+    yield* operator(decline);
+    yield* accessManager(decline);
+    expect(yield* reader(decline).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthAccessWriteScope,
+    });
+    expect(handled).toEqual(["decline", "decline"]);
   }).pipe(Effect.scoped),
 );
 
