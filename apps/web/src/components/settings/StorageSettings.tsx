@@ -474,9 +474,9 @@ export function WorktreeCleanupSection() {
     )
       ? "Mixed across selected machines"
       : undefined;
-  // A project's own rules are its overrides, which an environment lock does not reach.
+  // A policy locks these through worktreeCleanup, which also reaches each project's own rules.
   const lockablePath = (key: keyof WorktreeCleanupRules) =>
-    isProjectScope ? [] : [`storageCleanup.${key}`];
+    isProjectScope ? ["worktreeCleanup"] : ["worktreeCleanup", `storageCleanup.${key}`];
   const update = (patch: Partial<StorageCleanupSettings>) =>
     updateSettings({ storageCleanup: patch });
   const updateWorktree = (patch: Partial<WorktreeCleanupRules>) =>

@@ -1551,7 +1551,7 @@ function ScheduledTaskEditorForm({
             {webhookDenial !== undefined ? (
               <ManagedNotice>
                 {draft.scheduleMode === "webhook"
-                  ? `${webhookDenial} Switch this task to a time or an interval to save it.`
+                  ? `${webhookDenial} Switch this task to a time or an interval, or turn it off, to save it.`
                   : webhookDenial}
               </ManagedNotice>
             ) : null}
@@ -1812,7 +1812,7 @@ function ScheduledTaskEditorForm({
             editingTaskMissing ||
             !connected ||
             !tasksQuery.data ||
-            (draft.scheduleMode === "webhook" && webhookDenial !== undefined)
+            (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined)
           }
           onClick={() => void submit()}
         >

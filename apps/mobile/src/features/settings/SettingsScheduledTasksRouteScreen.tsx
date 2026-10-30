@@ -1058,7 +1058,7 @@ function TaskForm({
             </>
           ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined ? (
             <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
-              {`${webhookDenial} Switch the task to a timer, or pause or delete it from the task list.`}
+              {`${webhookDenial} Switch the task to a timer, or turn it off, to save it.`}
             </Text>
           ) : draft.schedule.mode === "webhook" ? (
             <>
@@ -1178,8 +1178,8 @@ function TaskForm({
           dictationPending ||
           taskMissing ||
           environmentUnavailable ||
-          // The server refuses every webhook save under this policy, enabled or not.
-          (draft.schedule.mode === "webhook" && webhookDenial !== undefined)
+          // The server refuses an enabled webhook task under this policy.
+          (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
         }
         onPress={() => void save()}
         label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}

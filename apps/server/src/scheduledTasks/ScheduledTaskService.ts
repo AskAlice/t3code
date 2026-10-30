@@ -1149,7 +1149,8 @@ export const layer = Layer.effect(
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input) {
-      if (input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
+      // A webhook task the policy blocks can still be edited while it is off.
+      if (input.enabled && input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
         return yield* taskError(
           webhookPolicyBlock,
           input.id === undefined ? {} : { taskId: input.id },
@@ -1296,6 +1297,13 @@ export const layer = Layer.effect(
     )(function* (input) {
       const existing = yield* loadTask(input.id);
       if (existing.enabled === input.enabled) return { task: existing };
+      if (
+        input.enabled &&
+        existing.schedule.type === "webhook" &&
+        webhookPolicyBlock !== undefined
+      ) {
+        return yield* taskError(webhookPolicyBlock, { taskId: input.id });
+      }
       const modeDenial =
         input.enabled && existing.threadId === null
           ? managedRuntimeModeDenial(managedPolicy.summary, existing.runtimeMode)
