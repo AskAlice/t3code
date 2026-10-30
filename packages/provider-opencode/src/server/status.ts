@@ -1,5 +1,6 @@
 import {
   type ModelCapabilities,
+  type ProviderOptionDescriptor,
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
@@ -195,6 +196,34 @@ function inferDefaultVariant(
   return undefined;
 }
 
+/** Without an inferable default, a Default choice lets the user go back to sending no variant. */
+function openCodeVariantDescriptors(
+  providerID: string,
+  variants: ReadonlyArray<string>,
+): Array<ProviderOptionDescriptor> {
+  if (variants.length === 0) return [];
+  const { OPENCODE_DEFAULT_VARIANT } = OpenCodeRuntime;
+  const inferred = inferDefaultVariant(providerID, variants);
+  const ids =
+    inferred !== undefined || variants.includes(OPENCODE_DEFAULT_VARIANT)
+      ? variants
+      : [OPENCODE_DEFAULT_VARIANT, ...variants];
+  const defaultVariant = inferred ?? OPENCODE_DEFAULT_VARIANT;
+  return [
+    {
+      id: "variant",
+      label: "Reasoning",
+      type: "select",
+      options: ids.map((id) => ({
+        id,
+        label: titleCaseSlug(id),
+        ...(id === defaultVariant ? { isDefault: true } : {}),
+      })),
+      currentValue: defaultVariant,
+    },
+  ];
+}
+
 function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
   return agents.find((agent) => agent.name === "build")?.name ?? agents[0]?.name ?? undefined;
 }
@@ -234,12 +263,6 @@ function openCodeCapabilitiesForModel(input: {
   const rawVariantValues = Object.keys(input.model.variants ?? {});
   const variantValues =
     rawVariantValues.length > 0 ? rawVariantValues : ["low", "medium", "high", "xhigh"];
-  const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
-  const variantOptions = variantValues.map((value) =>
-    defaultVariant === value
-      ? { id: value, label: titleCaseSlug(value), isDefault: true as const }
-      : { id: value, label: titleCaseSlug(value) },
-  );
   const primaryAgents = input.agents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
@@ -251,17 +274,7 @@ function openCodeCapabilitiesForModel(input: {
   );
   return createModelCapabilities({
     optionDescriptors: [
-      ...(variantOptions.length > 0
-        ? [
-            {
-              id: "variant",
-              label: "Reasoning",
-              type: "select" as const,
-              options: variantOptions,
-              ...(defaultVariant ? { currentValue: defaultVariant } : {}),
-            },
-          ]
-        : []),
+      ...openCodeVariantDescriptors(input.providerID, variantValues),
       ...(agentOptions.length > 0
         ? [
             {
@@ -580,25 +593,11 @@ const OPENCODE_2_PRESENTATION = {
 } as const;
 
 function openCode2ModelCapabilities(model: OpenCode2Model): ModelCapabilities {
-  const variants = model.variants.map((variant) => variant.id);
-  const defaultVariant = inferDefaultVariant(model.providerID, variants);
   return createModelCapabilities({
-    optionDescriptors:
-      variants.length === 0
-        ? []
-        : [
-            {
-              id: "variant",
-              label: "Reasoning",
-              type: "select",
-              options: variants.map((id) => ({
-                id,
-                label: titleCaseSlug(id),
-                ...(id === defaultVariant ? { isDefault: true } : {}),
-              })),
-              ...(defaultVariant === undefined ? {} : { currentValue: defaultVariant }),
-            },
-          ],
+    optionDescriptors: openCodeVariantDescriptors(
+      model.providerID,
+      model.variants.map((variant) => variant.id),
+    ),
   });
 }
 
