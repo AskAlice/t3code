@@ -773,7 +773,7 @@ function MessageAttachmentFile(props: {
   if (videoType !== null) {
     return (
       <View
-        className={props.standaloneMedia ? "overflow-hidden rounded-[20px]" : "my-1"}
+        className={props.standaloneMedia ? undefined : "my-1"}
         style={{ width: props.standaloneMedia ? 320 : 224, maxWidth: "100%" }}
       >
         <ThreadMarkdownVideo
@@ -781,12 +781,6 @@ function MessageAttachmentFile(props: {
           onPlaybackStart={props.onPlaybackStart}
           borderRadius={props.standaloneMedia ? 20 : undefined}
         />
-        {props.standaloneMedia ? (
-          <View
-            pointerEvents="none"
-            className="absolute inset-0 rounded-[20px] border border-border"
-          />
-        ) : null}
       </View>
     );
   }
