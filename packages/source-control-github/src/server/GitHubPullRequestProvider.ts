@@ -24,13 +24,10 @@ import {
   type PullRequestProviderApi,
   type ProviderRepositoryRef,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
-import {
-  unlistedCheckRuns,
-  withHeadCheckRuns,
-  type GitHubPullRequestCore,
-  type GitHubRepositoryAccess,
-  type GitHubViewerAccess,
-  type GitHubWorkflowRunApproval,
+import type {
+  GitHubRepositoryAccess,
+  GitHubViewerAccess,
+  GitHubWorkflowRunApproval,
 } from "./gitHubPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
@@ -283,94 +280,53 @@ export const make = Effect.gen(function* () {
       cause: error,
     });
 
-  const isRateLimited = (error: GitHubPullRequestApi.GitHubPullRequestApiError) =>
-    error._tag === "GitHubApiRateLimitError" || error._tag === "SourceControlRateLimitPausedError";
-
-  const readWorkflowApprovals = (
-    input: ProviderRepositoryRef & { readonly number: number },
-    pullRequest: GitHubPullRequestCore,
-  ) =>
-    pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
-      ? Effect.succeed({ runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>, unavailable: false })
-      : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
-        ? Effect.succeed({
-            runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-            unavailable: true,
-          })
-        : cli
-            .listWorkflowRunsRequiringApproval({
-              ...input,
-              headSha: pullRequest.headSha,
-              headBranch: pullRequest.headBranch,
-              headRepositoryOwner: pullRequest.headRepositoryOwner,
-              isCrossRepository: true,
-            })
-            .pipe(
-              Effect.matchEffect({
-                onFailure: (error) =>
-                  isRateLimited(error)
-                    ? Effect.fail(error)
-                    : Effect.succeed({
-                        runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                        unavailable: true,
-                      }),
-                onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
-              }),
-            );
-
-  // A token without Checks read, or an older Enterprise server, keeps the rollup's checks.
-  const readHeadChecks = (
-    input: ProviderRepositoryRef & { readonly number: number },
-    pullRequest: GitHubPullRequestCore,
-  ): Effect.Effect<
-    Pick<GitHubPullRequestCore, "checks" | "checksState">,
-    GitHubPullRequestApi.GitHubPullRequestApiError
-  > => {
-    const headSha = pullRequest.headSha;
-    if (pullRequest.state !== "open" || headSha == null) return Effect.succeed(pullRequest);
-    const head = { ...input, headSha };
-    return cli.listHeadCheckRuns(head).pipe(
-      Effect.flatMap((runs) => {
-        const unlisted = unlistedCheckRuns(pullRequest, runs);
-        return unlisted.length === 0
-          ? Effect.succeed(pullRequest)
-          : cli.listHeadWorkflowNames(head).pipe(
-              Effect.catchIf(
-                (error) => !isRateLimited(error),
-                () => Effect.succeed(new Map<number, string>()),
-              ),
-              Effect.map((names) => withHeadCheckRuns(pullRequest, unlisted, names)),
-            );
-      }),
-      Effect.catchIf(
-        (error) => !isRateLimited(error),
-        () => Effect.succeed(pullRequest),
-      ),
-    );
-  };
-
   const readChecks = (input: ProviderRepositoryRef & { readonly number: number }) =>
     cli.getPullRequestDetail(input).pipe(
-      Effect.flatMap((core) =>
-        Effect.all([readWorkflowApprovals(input, core), readHeadChecks(input, core)], {
-          concurrency: 2,
-        }).pipe(
-          Effect.map(([workflowApprovals, { checks, checksState }]) => {
-            const { checkContexts: _, ...pullRequest } = core;
-            return {
-              ...pullRequest,
-              author: withAvatar(pullRequest.author, new Map(), input.host),
-              checks: withWorkflowApprovals(
-                checks,
-                workflowApprovals.runs,
-                workflowApprovals.unavailable,
-              ),
-              checksState,
-              ...(workflowApprovals.unavailable
-                ? {}
-                : { workflowApprovalsRequired: workflowApprovals.runs.length }),
-            };
-          }),
+      Effect.flatMap((pullRequest) =>
+        (pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
+          ? Effect.succeed({
+              runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+              unavailable: false,
+            })
+          : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
+            ? Effect.succeed({
+                runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                unavailable: true,
+              })
+            : cli
+                .listWorkflowRunsRequiringApproval({
+                  ...input,
+                  headSha: pullRequest.headSha,
+                  headBranch: pullRequest.headBranch,
+                  headRepositoryOwner: pullRequest.headRepositoryOwner,
+                  isCrossRepository: true,
+                })
+                .pipe(
+                  Effect.matchEffect({
+                    onFailure: (error) =>
+                      error._tag === "GitHubApiRateLimitError" ||
+                      error._tag === "SourceControlRateLimitPausedError"
+                        ? Effect.fail(error)
+                        : Effect.succeed({
+                            runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                            unavailable: true,
+                          }),
+                    onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
+                  }),
+                )
+        ).pipe(
+          Effect.map((workflowApprovals) => ({
+            ...pullRequest,
+            author: withAvatar(pullRequest.author, new Map(), input.host),
+            checks: withWorkflowApprovals(
+              pullRequest.checks,
+              workflowApprovals.runs,
+              workflowApprovals.unavailable,
+            ),
+            ...(workflowApprovals.unavailable
+              ? {}
+              : { workflowApprovalsRequired: workflowApprovals.runs.length }),
+          })),
         ),
       ),
     );

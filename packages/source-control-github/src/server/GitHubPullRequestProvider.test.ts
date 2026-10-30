@@ -20,7 +20,7 @@ const coreFields = {
   canEditMaintainerEdits: false,
   reviewRequestTeams: [],
   checksTruncated: false,
-  checkContexts: [],
+  headCheckRuns: [],
   comparison: { behindBy: 0, viewerCanUpdate: true },
   viewerAccess: {
     canWrite: true,
@@ -377,7 +377,6 @@ describe("gitHubViewerPermissions", () => {
               comments: [],
               commits: [],
             }),
-          listHeadCheckRuns: () => Effect.succeed([]),
           listWorkflowRunsRequiringApproval: () =>
             Effect.succeed([
               {
@@ -450,7 +449,6 @@ it.effect("does not classify same-repository gates as fork workflow approvals", 
       Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
         revalidateChecks: (_input, read) => read,
         getPullRequestDetail: () => Effect.succeed({ ...openDetail, isCrossRepository: false }),
-        listHeadCheckRuns: () => Effect.succeed([]),
         listWorkflowRunsRequiringApproval: () =>
           Effect.die("same-repository pull requests must not probe fork workflow approvals"),
         getViewerAccess: () =>
@@ -491,7 +489,6 @@ it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
       Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
         revalidateChecks: (_input, read) => read,
         getPullRequestDetail: () => Effect.succeed(openDetail),
-        listHeadCheckRuns: () => Effect.succeed([]),
         listWorkflowRunsRequiringApproval: () =>
           Effect.fail(
             new GitHubPullRequestApi.GitHubWorkflowApprovalRefusedError({

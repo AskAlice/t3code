@@ -210,23 +210,6 @@ const RawWorkflowRunsSchema = Schema.Struct({
       id: Schema.Int,
       name: Schema.optional(Schema.NullOr(Schema.String)),
       html_url: Schema.optional(Schema.NullOr(Schema.String)),
-      check_suite_id: Schema.optional(Schema.NullOr(Schema.Int)),
-    }),
-  ),
-});
-
-const RawCheckRunsSchema = Schema.Struct({
-  check_runs: Schema.Array(
-    Schema.Struct({
-      node_id: Schema.String,
-      name: Schema.optional(Schema.NullOr(Schema.String)),
-      status: Schema.optional(Schema.NullOr(Schema.String)),
-      conclusion: Schema.optional(Schema.NullOr(Schema.String)),
-      started_at: Schema.optional(Schema.NullOr(Schema.String)),
-      completed_at: Schema.optional(Schema.NullOr(Schema.String)),
-      details_url: Schema.optional(Schema.NullOr(Schema.String)),
-      html_url: Schema.optional(Schema.NullOr(Schema.String)),
-      check_suite: Schema.optional(Schema.NullOr(Schema.Struct({ id: Schema.Int }))),
     }),
   ),
 });
@@ -778,7 +761,6 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
 
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
-const decodeCheckRuns = decodeJsonResult(RawCheckRunsSchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
 const decodeRow = Schema.decodeUnknownExit(PullRequestRow);
 
@@ -1010,7 +992,8 @@ export function toPullRequestWatchFingerprint(
 }
 
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
-  readonly checkContexts: ReadonlyArray<GitHubCheckContext>;
+  /** The head commit's check runs by suite, which a walk of a long rollup adds back. */
+  readonly headCheckRuns: ReadonlyArray<GitHubCheckContext>;
   readonly maintainerCanModify: boolean;
   readonly canEditMaintainerEdits: boolean;
   readonly reviewRequestTeams: ReadonlyArray<PullRequestActor>;
@@ -1029,10 +1012,16 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
   const repository = result.repository;
   const pr = repository?.pullRequest;
   if (repository == null || pr == null) return null;
-  const contexts = nodesOf(pr.commits)[0]?.commit.statusCheckRollup?.contexts;
-  const checkContexts = toCheckContexts(nodesOf(contexts));
+  const commit = nodesOf(pr.commits)[0]?.commit;
+  const contexts = commit?.statusCheckRollup?.contexts;
+  const headCheckRuns = nodesOf(commit?.checkSuites).flatMap((suite) =>
+    nodesOf(suite.checkRuns).map((run) => ({
+      ...run,
+      workflowName: suite.workflowRun?.workflow.name ?? null,
+    })),
+  );
   return {
-    checkContexts,
+    headCheckRuns,
     reviewRequestTeams: nodesOf(pr.reviewRequests).flatMap(
       ({ requestedReviewer }) => toRequestedTeam(requestedReviewer) ?? [],
     ),
@@ -1057,7 +1046,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
               ],
       ),
       labels: nodesOf(pr.labels),
-      statusCheckRollup: checkContexts,
+      statusCheckRollup: withHeadCheckRuns(toCheckContexts(nodesOf(contexts)), headCheckRuns),
     }),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
     maintainerCanModify: pr.maintainerCanModify,
@@ -1110,25 +1099,6 @@ export function decodeWorkflowRunsJson(
     })),
     rawCount: decoded.success.workflow_runs.length,
   });
-}
-
-export interface GitHubWorkflowSuitePage {
-  readonly workflowNameBySuite: ReadonlyArray<readonly [number, string]>;
-  readonly rawCount: number;
-}
-
-export function decodeWorkflowSuitesJson(
-  raw: string,
-): Result.Result<GitHubWorkflowSuitePage, DecodeFailure> {
-  return Result.map(decodeWorkflowRuns(raw), ({ workflow_runs }) => ({
-    workflowNameBySuite: workflow_runs.flatMap((run) => {
-      const name = trimmed(run.name);
-      return run.check_suite_id == null || name === null
-        ? []
-        : [[run.check_suite_id, name] as const];
-    }),
-    rawCount: workflow_runs.length,
-  }));
 }
 
 export function toPullRequestHeads(result: PullRequestHeads.Result): {
@@ -1229,66 +1199,23 @@ export function toPullRequestCheckContextsPage(result: PullRequestCheckContexts.
   };
 }
 
+/**
+ * The rollup leaves out check runs of workflow runs not attached to the pull request, such as a
+ * workflow_dispatch run on its branch, which the head commit's check suites still list.
+ */
+export function withHeadCheckRuns(
+  contexts: ReadonlyArray<GitHubCheckContext>,
+  headCheckRuns: ReadonlyArray<GitHubCheckContext>,
+): ReadonlyArray<GitHubCheckContext> {
+  const listed = new Set(contexts.map((context) => context.id));
+  return [...contexts, ...headCheckRuns.filter((run) => !listed.has(run.id))];
+}
+
 export function pullRequestChecksFromContexts(contexts: ReadonlyArray<GitHubCheckContext>): {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly checksState: PullRequestChecksState | null;
 } {
   return { checks: toChecks(contexts), checksState: rollupChecksState(contexts) };
-}
-
-export interface GitHubHeadCheckRun extends GitHubCheckContext {
-  readonly id: string;
-  readonly checkSuiteId: number | null;
-}
-
-export interface GitHubCheckRunPage {
-  readonly runs: ReadonlyArray<GitHubHeadCheckRun>;
-  readonly rawCount: number;
-}
-
-export function decodeCheckRunsJson(raw: string): Result.Result<GitHubCheckRunPage, DecodeFailure> {
-  return Result.map(decodeCheckRuns(raw), ({ check_runs }) => ({
-    runs: check_runs.map((run) => ({
-      id: run.node_id,
-      checkSuiteId: run.check_suite?.id ?? null,
-      name: run.name,
-      status: run.status,
-      conclusion: run.conclusion,
-      startedAt: run.started_at,
-      completedAt: run.completed_at,
-      detailsUrl: run.details_url ?? run.html_url,
-    })),
-    rawCount: check_runs.length,
-  }));
-}
-
-/**
- * The rollup leaves out check runs of workflow runs not attached to the pull request, such as a
- * workflow_dispatch run on its branch, which the head commit still lists.
- */
-export function unlistedCheckRuns(
-  pullRequest: Pick<GitHubPullRequestCore, "checkContexts">,
-  runs: ReadonlyArray<GitHubHeadCheckRun>,
-): ReadonlyArray<GitHubHeadCheckRun> {
-  const listed = new Set(pullRequest.checkContexts.map((context) => context.id));
-  return runs.filter((run) => !listed.has(run.id));
-}
-
-export function withHeadCheckRuns(
-  pullRequest: Pick<GitHubPullRequestCore, "checkContexts" | "checks" | "checksState">,
-  unlisted: ReadonlyArray<GitHubHeadCheckRun>,
-  workflowNameBySuite: ReadonlyMap<number, string>,
-): Pick<GitHubPullRequestCore, "checks" | "checksState"> {
-  return unlisted.length === 0
-    ? pullRequest
-    : pullRequestChecksFromContexts([
-        ...pullRequest.checkContexts,
-        ...unlisted.map(({ checkSuiteId, ...run }) => ({
-          ...run,
-          workflowName:
-            checkSuiteId === null ? null : (workflowNameBySuite.get(checkSuiteId) ?? null),
-        })),
-      ]);
 }
 
 export interface GitHubReviewThreadComments {

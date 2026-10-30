@@ -160,6 +160,28 @@ query PullRequestCore(
                 }
               }
             }
+            # The rollup leaves out check runs of workflow runs not attached to the pull request,
+            # such as a workflow_dispatch run on its branch. Runs past these windows go unread.
+            checkSuites(last: 100) {
+              nodes {
+                workflowRun {
+                  workflow {
+                    name
+                  }
+                }
+                checkRuns(first: 100, filterBy: { checkType: LATEST }) {
+                  nodes {
+                    id
+                    name
+                    status
+                    conclusion
+                    startedAt
+                    completedAt
+                    detailsUrl
+                  }
+                }
+              }
+            }
           }
         }
       }

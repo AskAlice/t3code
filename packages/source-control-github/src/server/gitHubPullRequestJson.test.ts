@@ -382,6 +382,7 @@ describe("pull request detail decoding", () => {
                     statusCheckRollup: {
                       contexts: { nodes: rollup, pageInfo: { hasNextPage: false } },
                     },
+                    checkSuites: { nodes: [] },
                   },
                 },
               ],

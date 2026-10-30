@@ -530,6 +530,26 @@ const checkRun = (fields: Record<string, unknown>) => ({
   ...fields,
 });
 
+const checkSuite = (
+  workflowName: string | null,
+  runs: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly status: string;
+    readonly conclusion: string | null;
+    readonly completedAt: string | null;
+  }>,
+) => ({
+  workflowRun: workflowName === null ? null : { workflow: { name: workflowName } },
+  checkRuns: {
+    nodes: runs.map((run) => ({
+      ...run,
+      startedAt: "2026-07-02T00:01:00Z",
+      detailsUrl: `https://github.com/acme/web/actions/runs/1/job/${run.id}`,
+    })),
+  },
+});
+
 const checkContextsPage = (
   nodes: ReadonlyArray<Record<string, unknown>>,
   endCursor: string | null,
@@ -1962,123 +1982,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  // regression: #27307 a workflow_dispatch run on the head commit is missing from the rollup
-  it.effect.each([
-    { status: "in_progress", conclusion: null, expected: "pending", checksState: "pending" },
-    { status: "completed", conclusion: "failure", expected: "failure", checksState: "failing" },
-  ] as const)(
-    "reports a head commit check run the status rollup leaves out ($status $conclusion)",
-    ({ status, conclusion, expected, checksState }) =>
-      Effect.gen(function* () {
-        const answer = coreResponse({
-          commits: {
-            nodes: [
-              {
-                commit: {
-                  statusCheckRollup: {
-                    contexts: {
-                      nodes: [
-                        {
-                          __typename: "StatusContext",
-                          context: "CodeRabbit",
-                          state: "SUCCESS",
-                          targetUrl: null,
-                          createdAt: "2026-07-02T00:00:00Z",
-                          description: "Review completed",
-                        },
-                      ],
-                      pageInfo: { hasNextPage: false },
-                    },
-                  },
-                },
-              },
-            ],
-          },
-        });
-        const checkRuns = {
-          total_count: 1,
-          check_runs: [
-            {
-              id: 111101401583,
-              node_id: "CR_kwDOVceCos8AAAAc1SKccw",
-              name: "ios",
-              head_sha: "abc123",
-              status,
-              conclusion,
-              started_at: "2026-07-02T00:01:00Z",
-              completed_at: conclusion === null ? null : "2026-07-02T00:05:00Z",
-              html_url: "https://github.com/acme/web/actions/runs/1/job/111101401583",
-              details_url: "https://github.com/acme/web/actions/runs/1/job/111101401583",
-              app: { slug: "github-actions" },
-              check_suite: { id: 1 },
-            },
-          ],
-        };
-        mockedExecute.mockImplementation((call) =>
-          Effect.succeed(
-            output(
-              encodeJson(
-                call.kind === "graphql"
-                  ? answer
-                  : call.path.startsWith("repos/acme/web/commits/abc123/check-runs")
-                    ? checkRuns
-                    : {},
-              ),
-            ),
-          ),
-        );
-        const provider = yield* GitHubPullRequestProvider.make;
-        const detail = yield* provider.getChangeRequest(pullRequestInput);
-        expect(
-          detail.checks.map((check) => [check.name, check.status]),
-          "a check run GitHub lists on the head commit but not in the PR's status rollup",
-        ).toEqual(expect.arrayContaining([["ios", expected]]));
-        expect(detail.checksState).toBe(checksState);
-      }),
-  );
-
-  it.effect("keeps the rollup's checks when the head commit's check runs are refused", () =>
-    Effect.gen(function* () {
-      const answer = coreResponse({
-        commits: {
-          nodes: [
-            {
-              commit: {
-                statusCheckRollup: {
-                  contexts: {
-                    nodes: [checkRun({ name: "build", conclusion: "SUCCESS" })],
-                    pageInfo: { hasNextPage: false },
-                  },
-                },
-              },
-            },
-          ],
-        },
-      });
-      mockedExecute.mockImplementation((call) =>
-        call.kind === "graphql"
-          ? Effect.succeed(output(encodeJson(answer)))
-          : Effect.fail(
-              new GitHubRequestPolicy.GitHubApiResponseError({
-                host: "github.com",
-                operation: "listHeadCheckRuns",
-                status: 403,
-              }),
-            ),
-      );
-      const provider = yield* GitHubPullRequestProvider.make;
-      const detail = yield* provider.getChangeRequest(pullRequestInput);
-      expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
-        ["build", "success"],
-      ]);
-      expect(detail.checksState).toBe("passing");
-    }),
-  );
-
-  const readDetailWithHeadRuns = (input: {
+  const readDetailWithSuites = (input: {
     readonly rollup: ReadonlyArray<Record<string, unknown>>;
-    readonly checkRuns: ReadonlyArray<Record<string, unknown>>;
-    readonly workflowRuns: ReadonlyArray<Record<string, unknown>>;
+    readonly suites: ReadonlyArray<Record<string, unknown>>;
   }) =>
     Effect.gen(function* () {
       const answer = coreResponse({
@@ -2089,63 +1995,63 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 statusCheckRollup: {
                   contexts: { nodes: input.rollup, pageInfo: { hasNextPage: false } },
                 },
+                checkSuites: { nodes: input.suites },
               },
             },
           ],
         },
       });
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          output(
-            encodeJson(
-              call.kind === "graphql"
-                ? answer
-                : call.path.startsWith("repos/acme/web/commits/abc123/check-runs")
-                  ? { total_count: input.checkRuns.length, check_runs: input.checkRuns }
-                  : call.path.startsWith("repos/acme/web/actions/runs?head_sha=abc123")
-                    ? { total_count: input.workflowRuns.length, workflow_runs: input.workflowRuns }
-                    : {},
-            ),
-          ),
-        ),
-      );
+      mockedExecute.mockImplementation(() => Effect.succeed(output(encodeJson(answer))));
       const provider = yield* GitHubPullRequestProvider.make;
       return yield* provider.getChangeRequest(pullRequestInput);
     });
-  const restCheckRun = (fields: {
-    readonly id: number;
-    readonly suite: number;
-    readonly status: string;
-    readonly conclusion: string | null;
-    readonly completedAt: string | null;
-  }) => ({
-    id: fields.id,
-    node_id: `CR_kwDOVceCos8AAAAc${fields.id.toString(36)}`,
-    name: "build",
-    head_sha: "abc123",
-    status: fields.status,
-    conclusion: fields.conclusion,
-    started_at: "2026-07-02T00:01:00Z",
-    completed_at: fields.completedAt,
-    details_url: `https://github.com/acme/web/actions/runs/1/job/${fields.id}`,
-    app: { slug: "github-actions" },
-    check_suite: { id: fields.suite },
-  });
+  // regression: #27307 a workflow_dispatch run on the head commit is missing from the rollup
+  it.effect.each([
+    { status: "IN_PROGRESS", conclusion: null, expected: "pending", checksState: "pending" },
+    { status: "COMPLETED", conclusion: "FAILURE", expected: "failure", checksState: "failing" },
+  ] as const)(
+    "reports a head commit check run the status rollup leaves out ($status $conclusion)",
+    ({ status, conclusion, expected, checksState }) =>
+      Effect.gen(function* () {
+        const detail = yield* readDetailWithSuites({
+          rollup: [
+            {
+              __typename: "StatusContext",
+              context: "CodeRabbit",
+              state: "SUCCESS",
+              targetUrl: null,
+              createdAt: "2026-07-02T00:00:00Z",
+              description: "Review completed",
+            },
+          ],
+          suites: [
+            checkSuite(null, []),
+            checkSuite("ios", [
+              {
+                id: "CR_kwDOVceCos8AAAAc1cLkWA",
+                name: "ios",
+                status,
+                conclusion,
+                completedAt: conclusion === null ? null : "2026-07-02T00:05:00Z",
+              },
+            ]),
+          ],
+        });
+        expect(
+          detail.checks.map((check) => [check.name, check.status]),
+          "a check run GitHub lists on the head commit but not in the PR's status rollup",
+        ).toEqual(expect.arrayContaining([["ios", expected]]));
+        expect(detail.checksState).toBe(checksState);
+      }),
+  );
 
-  // regression: #27307 GitHub check run ids exceed int32
-  it.effect("lists a rollup check run the head commit also reports once", () =>
+  // regression: #27307 a check run in both the rollup and its check suite
+  it.effect("lists a rollup check run its check suite also reports once", () =>
     Effect.gen(function* () {
-      const run = restCheckRun({
-        id: 123838742973,
-        suite: 111101401583,
-        status: "completed",
-        conclusion: "success",
-        completedAt: "2026-07-02T00:05:00Z",
-      });
-      const detail = yield* readDetailWithHeadRuns({
+      const detail = yield* readDetailWithSuites({
         rollup: [
           checkRun({
-            id: run.node_id,
+            id: "CR_kwDOVceCos8AAAAc1aJLww",
             name: "build",
             conclusion: "SUCCESS",
             completedAt: "2026-07-02T00:05:00Z",
@@ -2153,8 +2059,17 @@ layer("GitHubPullRequestApi.layer", (it) => {
             checkSuite: { workflowRun: { workflow: { name: "ci" } } },
           }),
         ],
-        checkRuns: [run],
-        workflowRuns: [],
+        suites: [
+          checkSuite("ci", [
+            {
+              id: "CR_kwDOVceCos8AAAAc1aJLww",
+              name: "build",
+              status: "COMPLETED",
+              conclusion: "SUCCESS",
+              completedAt: "2026-07-02T00:05:00Z",
+            },
+          ]),
+        ],
       });
       expect(detail.checks.map(({ name, status, required }) => [name, status, required])).toEqual([
         ["build", "success", true],
@@ -2165,27 +2080,27 @@ layer("GitHubPullRequestApi.layer", (it) => {
   // regression: #27307 dispatched workflows can share job names
   it.effect("tells apart same-named jobs of workflows the status rollup leaves out", () =>
     Effect.gen(function* () {
-      const detail = yield* readDetailWithHeadRuns({
+      const detail = yield* readDetailWithSuites({
         rollup: [],
-        checkRuns: [
-          restCheckRun({
-            id: 123838742973,
-            suite: 111101401583,
-            status: "completed",
-            conclusion: "failure",
-            completedAt: "2026-07-02T00:05:00Z",
-          }),
-          restCheckRun({
-            id: 123838742990,
-            suite: 111101401590,
-            status: "completed",
-            conclusion: "success",
-            completedAt: "2026-07-02T00:09:00Z",
-          }),
-        ],
-        workflowRuns: [
-          { id: 40985324514, name: "ios", check_suite_id: 111101401583 },
-          { id: 40985324520, name: "android", check_suite_id: 111101401590 },
+        suites: [
+          checkSuite("ios", [
+            {
+              id: "CR_kwDOVceCos8AAAAc1cLkWA",
+              name: "build",
+              status: "COMPLETED",
+              conclusion: "FAILURE",
+              completedAt: "2026-07-02T00:05:00Z",
+            },
+          ]),
+          checkSuite("android", [
+            {
+              id: "CR_kwDOVceCos8AAAAc1cMDnQ",
+              name: "build",
+              status: "COMPLETED",
+              conclusion: "SUCCESS",
+              completedAt: "2026-07-02T00:09:00Z",
+            },
+          ]),
         ],
       });
       expect(detail.checks.map((check) => [check.name, check.status])).toEqual(
@@ -2201,25 +2116,27 @@ layer("GitHubPullRequestApi.layer", (it) => {
   // regression: #27307 a dispatched rerun of a workflow the rollup lists
   it.effect("shows a dispatched rerun of a rollup check as that check", () =>
     Effect.gen(function* () {
-      const detail = yield* readDetailWithHeadRuns({
+      const detail = yield* readDetailWithSuites({
         rollup: [
           checkRun({
+            id: "CR_kwDOVceCos8AAAAc1aJLww",
             name: "build",
             conclusion: "SUCCESS",
             completedAt: "2026-07-02T00:05:00Z",
             checkSuite: { workflowRun: { workflow: { name: "ci" } } },
           }),
         ],
-        checkRuns: [
-          restCheckRun({
-            id: 123838742990,
-            suite: 111101401590,
-            status: "in_progress",
-            conclusion: null,
-            completedAt: null,
-          }),
+        suites: [
+          checkSuite("ci", [
+            {
+              id: "CR_kwDOVceCos8AAAAc1cMDnQ",
+              name: "build",
+              status: "IN_PROGRESS",
+              conclusion: null,
+              completedAt: null,
+            },
+          ]),
         ],
-        workflowRuns: [{ id: 40985324520, name: "ci", check_suite_id: 111101401590 }],
       });
       expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
         ["build", "pending"],
@@ -3500,6 +3417,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                             pageInfo: { hasNextPage: false },
                           },
                         },
+                        checkSuites: { nodes: [] },
                       },
                     },
                   ],
@@ -3559,6 +3477,28 @@ layer("GitHubPullRequestApi.layer", (it) => {
                               pageInfo: { hasNextPage: true, endCursor: "c1" },
                             },
                           },
+                          checkSuites: {
+                            nodes: [
+                              checkSuite("ci", [
+                                {
+                                  id: "CR_last",
+                                  name: "last",
+                                  status: "COMPLETED",
+                                  conclusion: "FAILURE",
+                                  completedAt: null,
+                                },
+                              ]),
+                              checkSuite("ios", [
+                                {
+                                  id: "CR_ios",
+                                  name: "ios",
+                                  status: "IN_PROGRESS",
+                                  conclusion: null,
+                                  completedAt: null,
+                                },
+                              ]),
+                            ],
+                          },
                         },
                       },
                     ],
@@ -3574,7 +3514,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
               checkContextsPage(
                 [
                   checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
-                  checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
+                  checkRun({
+                    id: "CR_last",
+                    name: "last",
+                    status: "COMPLETED",
+                    conclusion: "FAILURE",
+                  }),
                 ],
                 null,
               ),
@@ -3591,7 +3536,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
           expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
             100, 0,
           ]);
-        expect(detail.checks).toHaveLength(2);
+        // A suite's run the walked rollup lists counts once; one it leaves out is added.
+        expect(detail.checks.map((check) => check.name).toSorted()).toEqual([
+          "first",
+          "ios",
+          "last",
+        ]);
         expect(detail.checksState).toBe("failing");
         expect(detail.checksTruncated).toBe(false);
         // The whole rollup is walked from its start, so no check is counted twice or skipped.
@@ -3623,6 +3573,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                       pageInfo: { hasNextPage: true },
                     },
                   },
+                  checkSuites: { nodes: [] },
                 },
               },
             ],

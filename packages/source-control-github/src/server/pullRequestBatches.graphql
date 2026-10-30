@@ -121,7 +121,7 @@ query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!
               }
             }
             # The rollup leaves out suites of runs not attached to the pull request, such as a
-            # workflow_dispatch run on its branch.
+            # workflow_dispatch run on its branch. The same window as `PullRequestCore` reads.
             checkSuites(last: 100) {
               nodes {
                 status
