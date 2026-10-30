@@ -222,10 +222,12 @@ describe("pending timeline messages", () => {
         serverQueued("rich", {
           attachments: [attachment],
           context,
-          createdBy: "agent",
-          creationSource: "server",
-          scheduledTaskId: ScheduledTaskId.make("sample-schedule"),
-          senderThreadId: ThreadId.make("sender-thread"),
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            scheduledTaskId: ScheduledTaskId.make("sample-schedule"),
+            senderThreadId: ThreadId.make("sender-thread"),
+          } as NonNullable<QueuedThreadRun["message"]>,
         }),
       ],
     )[0];
@@ -255,10 +257,13 @@ describe("pending timeline messages", () => {
     // A rolled-back or cancelled queued run keeps its message in projection.messages
     // while its user_message item leaves the visible feed.
     const echoed = pending("rolled-back");
-    const waiting = pending("waiting");
-    const shown = selectPendingAcknowledgedMessages([echoed, waiting], {
+    // A bounded projection pages an applied message out; it must not come back as pending.
+    const pagedOut = { ...pending("paged-out"), sequence: 40 };
+    const waiting = { ...pending("waiting"), sequence: 50 };
+    const shown = selectPendingAcknowledgedMessages([echoed, pagedOut, waiting], {
       threadKey: "env:thread",
       queuedMessages: [],
+      sequence: 45,
       projectedMessages: [{ id: echoed.messageId }],
     });
     expect(shown).toEqual([waiting]);
