@@ -679,7 +679,7 @@ function SwipeActionButton(props: {
       {/* An offset, not padding: padding would grow the box and move the circle at 1x. */}
       <Animated.View
         style={[
-          { justifyContent: "center", minHeight: 14, top: props.compact ? 0 : 2 },
+          { justifyContent: "center", minHeight: 14, top: props.compact ? 0 : 1 },
           labelStyle,
         ]}
       >
