@@ -2,7 +2,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { CodeIcon, LayoutDashboardIcon } from "lucide-react";
 import { lazy, Suspense, useState, type CSSProperties, type ReactNode } from "react";
 
-import { useComposerDraftStore } from "~/composerDraftStore";
+import { appendComposerPrompt } from "~/composerDraftStore";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
@@ -86,7 +86,7 @@ export function MarkdownOpenUiCodeBlock({
                 source={code}
                 onOpenUrl={onOpenUrl}
                 onPrompt={(text) => {
-                  if (threadRef) useComposerDraftStore.getState().setPrompt(threadRef, text);
+                  if (threadRef) appendComposerPrompt(threadRef, text);
                 }}
               />
             </div>

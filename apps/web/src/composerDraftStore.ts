@@ -4501,3 +4501,10 @@ export function subscribeDraftThreadPromotion(input: {
     unsubscribeDrafts();
   };
 }
+
+/** Adds text below anything the reader is already typing, never replacing it. */
+export function appendComposerPrompt(target: ComposerThreadTarget, text: string): void {
+  const store = composerDraftStore.getState();
+  const current = store.getComposerDraft(target)?.prompt.trimEnd() ?? "";
+  store.setPrompt(target, current ? `${current}\n\n${text}` : text);
+}

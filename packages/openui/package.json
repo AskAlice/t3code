@@ -18,6 +18,10 @@
     "./styles": {
       "types": "./src/styles.ts",
       "import": "./src/styles.ts"
+    },
+    "./fences": {
+      "types": "./src/fences.ts",
+      "import": "./src/fences.ts"
     }
   },
   "scripts": {

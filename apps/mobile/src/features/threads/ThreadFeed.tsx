@@ -87,6 +87,7 @@ import {
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { splitOpenUiMarkdown } from "@t3tools/openui/fences";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -228,6 +229,7 @@ import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
+import { OpenUiWebView } from "./OpenUiWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -900,6 +902,7 @@ function ArtifactTemplateCard(props: {
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -925,19 +928,30 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         />
       );
     }
-    if (segment.markdown.trim().length === 0) return null;
-
-    const markdown = renderCodexInlineDirectivesAsMarkdown(segment.markdown);
-    return (
-      <SelectableMarkdownText
-        key={`markdown:${segment.sourceOffset}`}
-        markdown={markdown}
-        skills={props.skills}
-        textStyle={props.markdownStyles.nativeTextStyle}
-        {...linkHandlers}
-        renderImage={props.renderImage}
-      />
-    );
+    return splitOpenUiMarkdown(segment.markdown).map((part) => {
+      const offset = segment.sourceOffset + part.sourceOffset;
+      if (part.kind === "openui") {
+        return (
+          <OpenUiWebView
+            key={`openui:${offset}`}
+            source={part.source}
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+          />
+        );
+      }
+      if (part.markdown.trim().length === 0) return null;
+      return (
+        <SelectableMarkdownText
+          key={`markdown:${offset}`}
+          markdown={renderCodexInlineDirectivesAsMarkdown(part.markdown)}
+          skills={props.skills}
+          textStyle={props.markdownStyles.nativeTextStyle}
+          {...linkHandlers}
+          renderImage={props.renderImage}
+        />
+      );
+    });
   });
 });
 
@@ -1843,6 +1857,7 @@ function renderFeedEntry(
             <AssistantMarkdownContent
               markdown={renderedText}
               environmentId={props.environmentId}
+              threadId={props.threadId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
@@ -2701,6 +2716,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     <AssistantMarkdownContent
       markdown={text}
       environmentId={props.environmentId}
+      threadId={props.threadId}
       markdownStyles={markdownStyles.assistant}
       linkHandlers={markdownLinkHandlers}
       renderImage={renderMarkdownImage}

@@ -5,9 +5,15 @@ import { createRoot } from "react-dom/client";
 import { OPENUI_SOURCE_ELEMENT_ID } from "./protocol.ts";
 import { OpenUiView } from "./react.tsx";
 
+// Web hosts frame the page; React Native hosts load it top-level with their own bridge.
+const nativeHost = (window as { ReactNativeWebView?: { postMessage(data: string): void } })
+  .ReactNativeWebView;
+
 const postToHost = (method: string, params: Record<string, unknown>, id?: string) => {
-  if (window.parent === window) return false;
-  window.parent.postMessage({ jsonrpc: "2.0", ...(id ? { id } : {}), method, params }, "*");
+  const message = { jsonrpc: "2.0", ...(id ? { id } : {}), method, params };
+  if (nativeHost) nativeHost.postMessage(JSON.stringify(message));
+  else if (window.parent !== window) window.parent.postMessage(message, "*");
+  else return false;
   return true;
 };
 

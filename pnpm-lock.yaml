@@ -593,6 +593,9 @@ importers:
       '@t3tools/mobile-terminal-native':
         specifier: file:./modules/t3-terminal
         version: file:apps/mobile/modules/t3-terminal
+      '@t3tools/openui':
+        specifier: workspace:*
+        version: link:../../packages/openui
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared

@@ -38,7 +38,7 @@ import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
-import { useComposerDraftStore } from "~/composerDraftStore";
+import { appendComposerPrompt } from "~/composerDraftStore";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { shortcutConflictKey } from "~/keybindings";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
@@ -272,7 +272,7 @@ export function HtmlRenderDocument(props: {
     }
     const promptRequest = readHtmlRenderPromptRequest(event.data);
     if (promptRequest !== undefined && props.threadRef !== undefined) {
-      useComposerDraftStore.getState().setPrompt(props.threadRef, promptRequest.text);
+      appendComposerPrompt(props.threadRef, promptRequest.text);
     }
   });
   // Attach at commit because a fast page may post its initial height before passive effects run.

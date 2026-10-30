@@ -11,11 +11,13 @@ import {
   type OpenUIError,
 } from "@openuidev/react-lang";
 /* oxlint-disable react/no-array-index-key -- Program data is positional with no identity; rows hold no local state. */
-import { useState, type ReactNode } from "react";
+import { createContext, use, useState, type ReactNode } from "react";
 
 import { OPENUI_COMPONENT_SPECS, OPENUI_ROOT, type OpenUiComponentName } from "./library.ts";
 
 type Props = Record<string, unknown>;
+
+const OpenUrlContext = createContext<(url: string) => void>(() => undefined);
 
 const text = (value: unknown) => (value == null ? "" : String(value));
 const toneClass = (tone: unknown) => `tone-${typeof tone === "string" ? tone : "neutral"}`;
@@ -274,8 +276,22 @@ const RENDERERS: Record<OpenUiComponentName, ComponentRenderer<any>> = {
     );
   },
   Link: ({ props }) => {
+    const openUrl = use(OpenUrlContext);
     const url = text(props.url);
-    return isWebUrl(url) ? <a href={url}>{text(props.label)}</a> : <span>{text(props.label)}</span>;
+    return isWebUrl(url) ? (
+      <a
+        href={url}
+        onClick={(event) => {
+          // The host opens links; an in-place navigation would replace the app itself.
+          event.preventDefault();
+          openUrl(url);
+        }}
+      >
+        {text(props.label)}
+      </a>
+    ) : (
+      <span>{text(props.label)}</span>
+    );
   },
   Image: ({ props }) => {
     const src = text(props.src);
@@ -356,8 +372,10 @@ export function OpenUiView(props: {
     }
   };
   return (
-    <div className="openui">
-      <Renderer response={props.source} library={library} onAction={onAction} onError={onError} />
-    </div>
+    <OpenUrlContext value={props.onOpenUrl}>
+      <div className="openui">
+        <Renderer response={props.source} library={library} onAction={onAction} onError={onError} />
+      </div>
+    </OpenUrlContext>
   );
 }
