@@ -1978,6 +1978,35 @@ it.layer(NodeServices.layer)("server settings under a managed policy", (it) => {
     }).pipe(Effect.provide(layerServerSettings(policy))),
   );
 
+  it.effect("keeps stored fields inside a setting the policy defaults as a whole", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({ storageCleanup: { logsAfterDays: 30, browserArtifactsAfterDays: 7 } }),
+      );
+
+      yield* service.updateSettings({ defaultAutoPull: true });
+      const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(stored.storageCleanup, { logsAfterDays: 30, browserArtifactsAfterDays: 7 });
+    }).pipe(
+      Effect.provide(
+        layerServerSettings({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: {
+            storageCleanup: {
+              value: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, logsAfterDays: 30 },
+              locked: false,
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
   it.effect("lays locks over the user's own and per-project values without persisting them", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

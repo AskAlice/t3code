@@ -662,7 +662,9 @@ const make = Effect.gen(function* () {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
         managed.keepStored === undefined
           ? stripped
-          : managed.keepStored(stripped, settings, yield* readStoredSettings),
+          : managed.keepStored(stripped, settings, yield* readStoredSettings, (key) =>
+              ATOMIC_SETTINGS_KEYS.has(key),
+            ),
       );
 
       return yield* writeFileStringAtomically({

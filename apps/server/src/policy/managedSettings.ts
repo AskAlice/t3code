@@ -25,13 +25,17 @@ const UNMANAGEABLE_KEYS: ReadonlySet<string> = new Set([
   "projectScriptOverrides",
 ]);
 
+/** Legacy settings the server derives from another on every write; manage that one instead. */
+const DERIVED_FROM: ReadonlyMap<string, string> = new Map([
+  ["compactIdleThreads", "idleCompaction"],
+]);
+
 /**
- * Settings another one overrides when it is set: `idleCompaction` wins over the legacy switch, and
- * `worktreeCleanup`, also per project, over the worktree rules in `storageCleanup`. A lock on the
- * first alone would look enforced without being, so the second must be locked too.
+ * Settings another one overrides when it is set: `worktreeCleanup`, also per project, wins over
+ * the worktree rules in `storageCleanup`. A lock on the first alone would look enforced without
+ * being, so the second must be locked too.
  */
 const OVERRIDDEN_BY: ReadonlyArray<readonly [overridden: string, by: string]> = [
-  ["compactIdleThreads", "idleCompaction"],
   ["storageCleanup.worktree", "worktreeCleanup"],
 ];
 
@@ -136,11 +140,17 @@ export interface ManagedSettings {
   readonly lockedPaths: ReadonlyArray<string>;
   /**
    * Put back into a stripped settings file the values `stored`, the file before this write, held
-   * at paths the policy defaults: equal to the policy's default, they are still the user's choice.
-   * Undefined without policy defaults, so writers can skip reading the file.
+   * at or under paths the policy defaults: equal to the policy's default, they are still the
+   * user's choice. A key `isAtomic` names comes back whole or not at all. Undefined without
+   * policy defaults, so writers can skip reading the file.
    */
   readonly keepStored:
-    | ((stripped: unknown, settings: ServerSettings, stored: unknown) => unknown)
+    | ((
+        stripped: unknown,
+        settings: ServerSettings,
+        stored: unknown,
+        isAtomic: (key: string) => boolean,
+      ) => unknown)
     | undefined;
 }
 
@@ -230,6 +240,13 @@ export function makeManagedSettings(
     }
     if (!(head in ServerSettings.fields) || UNMANAGEABLE_KEYS.has(head)) {
       return { _tag: "Invalid", reason: `"${path}" is not a setting this version can manage` };
+    }
+    const source = DERIVED_FROM.get(head);
+    if (source !== undefined) {
+      return {
+        _tag: "Invalid",
+        reason: `"${head}" follows "${source}"; manage "${source}" instead`,
+      };
     }
     (setting.locked ? locks : defaults).push({ path, segments, value: setting.value });
   }
@@ -384,16 +401,23 @@ export function makeManagedSettings(
   const keepStored: ManagedSettings["keepStored"] =
     defaults.length === 0
       ? undefined
-      : (stripped, settings, stored) => {
+      : (stripped, settings, stored, isAtomic) => {
           const encoded = encodeSettings(settings);
-          return defaults.reduce<unknown>((tree, entry) => {
-            const previous = getPath(stored, entry.segments);
-            return previous !== undefined &&
-              getPath(tree, entry.segments) === undefined &&
-              jsonEqual(previous, getPath(encoded, entry.segments))
-              ? setPath(tree, entry.segments, getPath(settings, entry.segments))
+          const restore = (tree: unknown, segments: Segments): unknown => {
+            const previous = getPath(stored, segments);
+            if (previous === undefined) return tree;
+            if (isRecord(previous) && !isAtomic(segments.at(-1) ?? "")) {
+              return Object.keys(previous).reduce<unknown>(
+                (next, key) => restore(next, [...segments, key]),
+                tree,
+              );
+            }
+            return getPath(tree, segments) === undefined &&
+              jsonEqual(previous, getPath(encoded, segments))
+              ? setPath(tree, segments, getPath(settings, segments))
               : tree;
-          }, stripped);
+          };
+          return defaults.reduce<unknown>((tree, entry) => restore(tree, entry.segments), stripped);
         };
 
   return {
