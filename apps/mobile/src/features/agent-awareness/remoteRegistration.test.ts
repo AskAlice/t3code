@@ -656,6 +656,47 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
     },
   );
+  it.effect("enables Live Activity updates over a stored disabled preference", () => {
+    const requests: Array<{ readonly url: string; readonly body: unknown }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "dpop",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      requests.push({ url: request.url, body: await request.json() });
+      return Response.json({ ok: true });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      requests.length = 0;
+
+      const exit = yield* Effect.exit(
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true }),
+      );
+
+      expect(exit).toStrictEqual(Exit.void);
+      expect(requests).toMatchObject([
+        {
+          url: "https://relay.example.test/v1/mobile/devices",
+          body: { preferences: { liveActivitiesEnabled: true } },
+        },
+      ]);
+      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
   it.effect("preserves relay rejection errors with React Native response headers", () => {
     vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
     vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
