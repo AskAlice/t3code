@@ -250,7 +250,13 @@ export function getProviderOptionCurrentValue(
   // Reported values are display-only; callers that build dispatch options omit this context.
   const reportedValue = getReportedOptionValue(descriptor.id, selection, reportedSelection);
   if (reportedValue !== undefined) return reportedValue;
-  if (descriptor.id === "variant" && selection && !hasExplicitOption) return undefined;
+  // Without an explicit variant none is sent, which is the catalog's "default" choice when offered.
+  if (descriptor.id === "variant" && selection && !hasExplicitOption) {
+    return descriptor.type === "select" &&
+      descriptor.options.some((option) => option.id === "default")
+      ? "default"
+      : undefined;
+  }
   if (descriptor.type === "boolean") {
     return descriptor.currentValue;
   }

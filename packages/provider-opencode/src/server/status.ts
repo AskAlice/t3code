@@ -217,7 +217,7 @@ function openCodeVariantDescriptors(
       options: ids.map((id) => ({
         id,
         label: titleCaseSlug(id),
-        ...(id === defaultVariant ? { isDefault: true } : {}),
+        ...(id === inferred ? { isDefault: true } : {}),
       })),
       currentValue: defaultVariant,
     },

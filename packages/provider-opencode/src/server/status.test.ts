@@ -658,8 +658,8 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
 
         NodeAssert.ok(variant?.type === "select");
         NodeAssert.deepEqual(
-          variant.options.find((option) => option.isDefault === true),
-          { id: "default", label: "Default", isDefault: true },
+          variant.options.find((option) => option.id === "default"),
+          { id: "default", label: "Default" },
           "OpenCode cannot infer a default variant, so the picker needs a choice that sends none",
         );
         NodeAssert.equal(variant.currentValue, "default");
