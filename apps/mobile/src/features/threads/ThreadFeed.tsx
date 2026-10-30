@@ -33,6 +33,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
+  resolveUserMessageFileCards,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -577,6 +578,8 @@ function MessageAttachmentFile(props: {
   readonly onPressPreview: (source: FilePreviewSource) => void;
   readonly onPlaybackStart: () => void;
   readonly standaloneMedia?: boolean;
+  readonly standaloneFile?: boolean;
+  readonly available?: boolean;
 }) {
   const sourceIdentifier = useId();
   const navigation = useNavigation();
@@ -611,7 +614,7 @@ function MessageAttachmentFile(props: {
   );
 
   const shareFile = (sourceIdentifier?: string) => {
-    if (httpBaseUrl === null || openingRef.current) return;
+    if (props.available === false || httpBaseUrl === null || openingRef.current) return;
     const controller = new AbortController();
     openingRef.current = controller;
     setOpening(true);
@@ -730,20 +733,21 @@ function MessageAttachmentFile(props: {
     );
   }
 
+  const disabled = props.available === false || opening || httpBaseUrl === null;
   return (
-    <>
-      <PresentationSource
-        identifier={sourceIdentifier}
-        className="my-1"
-        style={{ width: 280, maxWidth: "100%" }}
-      >
+    <PresentationSource
+      identifier={sourceIdentifier}
+      className="my-1"
+      style={{ width: 280, maxWidth: "100%" }}
+    >
+      <View className="min-w-0 flex-row items-center overflow-hidden rounded-xl border border-border bg-card">
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Open ${attachment.name}`}
           accessibilityValue={{ text: `${fileTypeLabel}, ${sizeLabel}` }}
-          accessibilityState={{ disabled: opening || httpBaseUrl === null, busy: opening }}
-          disabled={opening || httpBaseUrl === null}
-          className="min-w-0 flex-row items-center gap-3 rounded-xl border border-border bg-card p-3 active:bg-subtle"
+          accessibilityState={{ disabled, busy: opening }}
+          disabled={disabled}
+          className="min-w-0 flex-1 flex-row items-center gap-3 p-3 active:bg-subtle"
           onLongPress={() => shareFile(sourceIdentifier)}
           onPress={openAttachment}
         >
@@ -769,8 +773,24 @@ function MessageAttachmentFile(props: {
             type="monochrome"
           />
         </Pressable>
-      </PresentationSource>
-    </>
+        {props.standaloneFile ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Download ${attachment.name}`}
+            accessibilityState={{ disabled, busy: opening }}
+            disabled={disabled}
+            className="mr-1 min-h-11 w-11 items-center justify-center rounded-lg active:bg-subtle disabled:opacity-40"
+            onPress={() => shareFile(sourceIdentifier)}
+          >
+            <SymbolView
+              name="arrow.down"
+              size={16}
+              tintColorClassName="accent-foreground-muted"
+            />
+          </Pressable>
+        ) : null}
+      </View>
+    </PresentationSource>
   );
 }
 
@@ -1744,12 +1764,23 @@ function renderFeedEntry(
       const pendingAttachments = entry.pendingMessage?.attachments ?? [];
       const pendingMedia = standaloneMedia ? pendingAttachments.filter(isMediaAttachment) : [];
       const pendingBubbleAttachments = standaloneMedia
-        ? pendingAttachments.filter((attachment) => !isMediaAttachment(attachment))
+        ? pendingAttachments.filter(
+            (attachment) =>
+              !isMediaAttachment(attachment) && !inlineAttachmentIds.has(attachment.id),
+          )
         : pendingAttachments;
+      const fileCards = standaloneMedia
+        ? resolveUserMessageFileCards({
+            text: presentation.text,
+            attachments: attachments.length > 0 ? attachments : pendingAttachments,
+            context: message.context,
+          })
+        : null;
       const hasBubble =
-        foldRowId !== null ||
-        presentation.text.trim().length > 0 ||
-        visibleAttachments.length + pendingBubbleAttachments.length > 0;
+        fileCards === null &&
+        (foldRowId !== null ||
+          presentation.text.trim().length > 0 ||
+          visibleAttachments.length + pendingBubbleAttachments.length > 0);
       return (
         <Animated.View
           className="mb-5 items-end"
@@ -1775,6 +1806,35 @@ function renderFeedEntry(
                 onPressPreview={props.onPressPreview}
                 onPlaybackStart={props.onPlaybackStart}
               />
+            </View>
+          ) : null}
+          {fileCards ? (
+            <View
+              className="items-end"
+              style={{ maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth }}
+            >
+              {fileCards.map((file) => {
+                const pendingFile = pendingAttachments.find(
+                  (attachment) => attachment.id === file.id,
+                );
+                return (
+                  <MessageAttachmentFile
+                    key={file.id}
+                    environmentId={props.environmentId}
+                    attachment={
+                      pendingFile?.uploadedAttachmentId
+                        ? { ...file, id: pendingFile.uploadedAttachmentId }
+                        : file
+                    }
+                    available={
+                      pendingFile === undefined || pendingFile.uploadedAttachmentId !== undefined
+                    }
+                    onPressPreview={props.onPressPreview}
+                    onPlaybackStart={props.onPlaybackStart}
+                    standaloneFile
+                  />
+                );
+              })}
             </View>
           ) : null}
           {hasBubble ? (
