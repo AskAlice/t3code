@@ -1,9 +1,72 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerContextId, GuestMessageId } from "@t3tools/contracts";
+import { ComposerContextId, GuestMessageId, ScheduledTaskId } from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
-import { resolveUserMessageFileCards, resolveUserMessagePresentation } from "./userMessage.ts";
+import {
+  resolveUserMessageFileCards,
+  resolveUserMessageGrouping,
+  resolveUserMessagePresentation,
+} from "./userMessage.ts";
+
+describe("resolveUserMessageGrouping", () => {
+  const own = { role: "user", text: "hello" };
+
+  it("groups only adjacent own messages", () => {
+    expect(resolveUserMessageGrouping(own, own, own)).toEqual({
+      groupedWithPrevious: true,
+      groupedWithNext: true,
+      continuesSteer: false,
+    });
+    expect(resolveUserMessageGrouping(own, undefined, own)).toMatchObject({
+      groupedWithPrevious: false,
+      groupedWithNext: true,
+    });
+    for (const boundary of [
+      undefined,
+      { ...own, role: "assistant" },
+      { ...own, createdBy: "agent" as const },
+      { ...own, createdBy: "agent" as const, creationSource: "server" as const },
+      { ...own, scheduledTaskId: ScheduledTaskId.make("task") },
+      {
+        ...own,
+        context: {
+          guest: { guestMessageId: GuestMessageId.make("guest"), name: "Sam", text: "hi" },
+        },
+      },
+    ]) {
+      expect(resolveUserMessageGrouping(own, boundary, boundary)).toEqual({
+        groupedWithPrevious: false,
+        groupedWithNext: false,
+        continuesSteer: false,
+      });
+      expect(resolveUserMessageGrouping(boundary, own, own)).toEqual({
+        groupedWithPrevious: false,
+        groupedWithNext: false,
+        continuesSteer: false,
+      });
+    }
+  });
+
+  it("shows one label for consecutive steers, including promoted queued messages", () => {
+    for (const inputIntent of ["steer", "promoted_queued_to_steer"] as const) {
+      const steer = { ...own, inputIntent };
+      expect(
+        resolveUserMessageGrouping(steer, { ...own, inputIntent: "steer" }, undefined)
+          .continuesSteer,
+      ).toBe(true);
+      expect(
+        resolveUserMessageGrouping(
+          steer,
+          { ...own, inputIntent: "promoted_queued_to_steer" },
+          undefined,
+        ).continuesSteer,
+      ).toBe(true);
+      expect(resolveUserMessageGrouping(steer, own, undefined).continuesSteer).toBe(false);
+      expect(resolveUserMessageGrouping(own, steer, undefined).continuesSteer).toBe(false);
+    }
+  });
+});
 
 describe("resolveUserMessageFileCards", () => {
   const file = {

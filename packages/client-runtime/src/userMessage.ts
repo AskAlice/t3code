@@ -6,6 +6,7 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2IdleCompaction,
+  type OrchestrationV2UserMessageInputIntent,
   ScheduledTaskId,
 } from "@t3tools/contracts";
 import {
@@ -113,5 +114,26 @@ export function resolveUserMessagePresentation(message: {
           ? "t3code"
           : "agent",
     scheduledTaskId: undefined,
+  };
+}
+
+type GroupableUserMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
+};
+
+export function resolveUserMessageGrouping(
+  message: GroupableUserMessage | undefined,
+  previous: GroupableUserMessage | undefined,
+  next: GroupableUserMessage | undefined,
+) {
+  const isOwnMessage = (value: GroupableUserMessage | undefined) =>
+    value?.role === "user" && resolveUserMessagePresentation(value).attribution === null;
+  const isSteer = (value: GroupableUserMessage | undefined) =>
+    value?.inputIntent === "steer" || value?.inputIntent === "promoted_queued_to_steer";
+  const groupedWithPrevious = isOwnMessage(message) && isOwnMessage(previous);
+  return {
+    groupedWithPrevious,
+    groupedWithNext: isOwnMessage(message) && isOwnMessage(next),
+    continuesSteer: groupedWithPrevious && isSteer(message) && isSteer(previous),
   };
 }

@@ -34,6 +34,7 @@ import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
   resolveUserMessageFileCards,
+  resolveUserMessageGrouping,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -782,11 +783,7 @@ function MessageAttachmentFile(props: {
             className="mr-1 min-h-11 w-11 items-center justify-center rounded-lg active:bg-subtle disabled:opacity-40"
             onPress={() => shareFile(sourceIdentifier)}
           >
-            <SymbolView
-              name="arrow.down"
-              size={16}
-              tintColorClassName="accent-foreground-muted"
-            />
+            <SymbolView name="arrow.down" size={16} tintColorClassName="accent-foreground-muted" />
           </Pressable>
         ) : null}
       </View>
@@ -1499,6 +1496,7 @@ function renderFeedEntry(
     readonly contentWidth: number;
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
+    readonly userMessageGrouping: ReturnType<typeof resolveUserMessageGrouping>;
   },
 ) {
   const entry = info.item;
@@ -1743,7 +1741,9 @@ function renderFeedEntry(
       const foldRowId = presentation.attribution === "agent" ? `agent:${message.id}` : null;
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
-      const intentBadge = resolveUserMessageIntentBadge(message.inputIntent);
+      const intentBadge = props.userMessageGrouping.continuesSteer
+        ? null
+        : resolveUserMessageIntentBadge(message.inputIntent);
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),
       );
@@ -1783,7 +1783,7 @@ function renderFeedEntry(
           visibleAttachments.length + pendingBubbleAttachments.length > 0);
       return (
         <Animated.View
-          className="mb-5 items-end"
+          className={cn("items-end", props.userMessageGrouping.groupedWithNext ? "mb-1" : "mb-5")}
           {...(enterAnimated ? { entering: FadeInUp.duration(220) } : {})}
         >
           {presentation.attribution === "t3code" ? (
@@ -1842,6 +1842,8 @@ function renderFeedEntry(
               className="min-w-0 rounded-[20px]"
               style={{
                 backgroundColor: userBubbleColor,
+                borderTopEndRadius: props.userMessageGrouping.groupedWithPrevious ? 6 : 20,
+                borderBottomEndRadius: props.userMessageGrouping.groupedWithNext ? 6 : 20,
                 maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
                 ...(!bubbleBodyVisible
                   ? null
@@ -3358,6 +3360,15 @@ export const ThreadFeed = memo(function ThreadFeed({
     }
   }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef]);
 
+  const groupingMessage = (index: number) => {
+    const entry = presentedFeed[index];
+    return entry?.type === "message" &&
+      !isCompactionCommandFeedEntry(entry) &&
+      entry.message.id !== workflowOpening?.messageId
+      ? entry.message
+      : undefined;
+  };
+  const setupBreaksBurst = Boolean(props.worktreeSetup || props.setupWorkingStartedAt);
   const renderItem = (info: { item: ThreadFeedRow; index: number }) => (
     <Animated.View
       key={info.item.id}
@@ -3371,6 +3382,15 @@ export const ThreadFeed = memo(function ThreadFeed({
       >
         <ThreadMediaVisibility>
           {renderFeedEntry(info, {
+            userMessageGrouping: resolveUserMessageGrouping(
+              groupingMessage(info.index),
+              setupBreaksBurst && info.index - 1 === setupAnchorIndex
+                ? undefined
+                : groupingMessage(info.index - 1),
+              setupBreaksBurst && info.index === setupAnchorIndex
+                ? undefined
+                : groupingMessage(info.index + 1),
+            ),
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
@@ -3494,7 +3514,7 @@ export const ThreadFeed = memo(function ThreadFeed({
               followsEnd && !disclosureToggleSettling ? false : maintainVisibleContentPosition
             }
             data={presentedFeed}
-            extraData={listAppearanceData}
+            extraData={{ ...listAppearanceData, presentedFeed }}
             renderItem={renderItem}
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
