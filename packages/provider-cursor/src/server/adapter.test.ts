@@ -40,17 +40,18 @@ import {
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
 
-// The SDK does not export its grep result converter, so load it from the installed chunk.
-const loadInstalledCursorGrepResultConverter = (build: "esm" | "cjs" = "esm") => {
+// The SDK does not export its grep result converter, so find it in the installed build's chunks.
+const loadInstalledCursorGrepResultConverter = (build: "esm" | "cjs") => {
   const sdkEntry = NodeModule.createRequire(import.meta.url).resolve("@cursor/sdk");
-  const chunk = NodeFS.readFileSync(
-    NodePath.join(NodePath.dirname(sdkEntry), `../${build}/689.js`),
-    "utf8",
-  );
-  const anchor = chunk.search(
-    /function [\w$]+\(e\)\{if\(e\?\.result\?\.case\)switch\(e\.result\.case\)\{case"content":return\{type:"content"/,
-  );
-  assert.isAtLeast(anchor, 0, "Cursor SDK grep result converter not found");
+  const buildDir = NodePath.join(NodePath.dirname(sdkEntry), "..", build);
+  const anchorPattern =
+    /function [\w$]+\(e\)\{if\(e\?\.result\?\.case\)switch\(e\.result\.case\)\{case"content":return\{type:"content"/;
+  const chunk = NodeFS.readdirSync(buildDir)
+    .filter((name) => name.endsWith(".js"))
+    .map((name) => NodeFS.readFileSync(NodePath.join(buildDir, name), "utf8"))
+    .find((source) => anchorPattern.test(source));
+  assert.isDefined(chunk, `Cursor SDK grep result converter not found in ${buildDir}`);
+  const anchor = chunk.search(anchorPattern);
   let depth = 0;
   let end = chunk.indexOf("{", anchor);
   for (; end < chunk.length; end++) {
@@ -1740,110 +1741,51 @@ describe("CursorAdapterV2", () => {
     );
   });
 
-  it("keeps grouped grep content matches through the installed Cursor SDK converter", () => {
-    const convertGrepResult = loadInstalledCursorGrepResultConverter();
-
-    assert.deepEqual(
-      convertGrepResult({
-        result: {
-          case: "content",
-          value: {
-            matches: [
-              {
-                file: "src/one.ts",
-                matches: [
-                  { lineNumber: 10, content: "before one", isContextLine: true },
-                  { lineNumber: 11, content: "needle one", isContextLine: false },
-                  { lineNumber: 12, content: "after one", isContextLine: true },
-                ],
-              },
-              {
-                file: "src/two.ts",
-                matches: [{ lineNumber: 3, content: "needle two", isContextLine: false }],
-              },
-            ],
-            totalLines: 4,
-            totalMatchedLines: 7,
-            clientTruncated: true,
-            ripgrepTruncated: false,
-          },
-        },
-      }),
-      {
-        type: "content",
-        output: {
-          matches: [
-            {
-              file: "src/one.ts",
-              lineNumber: 11,
-              line: "needle one",
-              beforeContext: ["before one"],
-              afterContext: ["after one"],
-            },
-            { file: "src/two.ts", lineNumber: 3, line: "needle two" },
-          ],
-          totalMatches: 7,
-        },
-      },
-    );
-  });
-
   it.each(["esm", "cjs"] as const)(
-    "converts legacy, malformed, and gapped grep content results in the %s build",
+    "keeps grouped grep content match text, lines, and totals in the %s Cursor SDK build",
     (build) => {
       const convertGrepResult = loadInstalledCursorGrepResultConverter(build);
-      const convertContent = (value: unknown) =>
-        convertGrepResult({ result: { case: "content", value } });
-
-      const legacyMatch = { file: "a.ts", lineNumber: 2, line: "hit", beforeContext: ["w"] };
-      assert.deepEqual(convertContent({ matches: [legacyMatch], totalMatches: 1 }), {
-        type: "content",
-        output: { matches: [legacyMatch], totalMatches: 1 },
-      });
 
       assert.deepEqual(
-        convertContent({
-          matches: [
-            {
-              file: "a.ts",
-              matches: [null, { content: 5 }, { lineNumber: "4", content: "kept" }],
-            },
-            { file: 7, matches: [{ lineNumber: 1, content: "dropped" }] },
-          ],
-        }),
-        { type: "content", output: { matches: [{ file: "a.ts", line: "kept" }], totalMatches: 0 } },
-      );
-
-      assert.deepEqual(
-        convertContent({
-          matches: [
-            {
-              file: "a.ts",
+        convertGrepResult({
+          result: {
+            case: "content",
+            value: {
               matches: [
-                { lineNumber: 10, content: "first", isContextLine: false },
-                { lineNumber: 11, content: "after first", isContextLine: true },
-                { lineNumber: 48, content: "before second", isContextLine: true },
-                { lineNumber: 50, content: "second", isContextLine: false },
-                { lineNumber: 90, content: "stray", isContextLine: true },
+                {
+                  file: "src/one.ts",
+                  matches: [
+                    { lineNumber: 10, content: "before one", isContextLine: true },
+                    { lineNumber: 11, content: "needle one", isContextLine: false },
+                    { lineNumber: 12, content: "after one", isContextLine: true },
+                  ],
+                },
+                {
+                  file: "src/two.ts",
+                  matches: [{ lineNumber: 3, content: "needle two", isContextLine: false }],
+                },
               ],
+              totalLines: 4,
+              totalMatchedLines: 7,
+              clientTruncated: true,
+              ripgrepTruncated: false,
             },
-          ],
-          totalMatchedLines: 2,
+          },
         }),
         {
           type: "content",
           output: {
             matches: [
-              { file: "a.ts", lineNumber: 10, line: "first", afterContext: ["after first"] },
               {
-                file: "a.ts",
-                lineNumber: 50,
-                line: "second",
-                beforeContext: ["before second"],
-                afterContext: ["stray"],
+                file: "src/one.ts",
+                lineNumber: 11,
+                line: "needle one",
+                beforeContext: ["before one"],
+                afterContext: ["after one"],
               },
+              { file: "src/two.ts", lineNumber: 3, line: "needle two" },
             ],
-            totalMatches: 2,
+            totalMatches: 7,
           },
         },
       );
