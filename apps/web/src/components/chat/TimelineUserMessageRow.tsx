@@ -97,6 +97,8 @@ function UserFileCard({
   readonly copyMarkdown: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
+  const pastedText = file.source?._tag === "pasted-text";
+  const label = pastedText ? "Pasted text" : file.name;
   const extension = /\.([a-z0-9]{1,8})$/i.exec(file.name)?.[1]?.toUpperCase() ?? "File";
   const identity = (
     <>
@@ -105,10 +107,11 @@ function UserFileCard({
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium group-hover/file:underline">
-          {file.name}
+          {label}
         </span>
         <span className="block text-xs text-muted-foreground tabular-nums">
-          {extension} · {formatBytes(file.sizeBytes)}
+          {!pastedText && `${extension} · `}
+          {formatBytes(file.sizeBytes)}
         </span>
       </span>
     </>
@@ -124,7 +127,7 @@ function UserFileCard({
         <>
           <button
             type="button"
-            aria-label={`Preview ${file.name}`}
+            aria-label={`Preview ${label}`}
             onClick={() => ctx.onFileOpen(file)}
             className="group/file focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
           >
@@ -136,14 +139,14 @@ function UserFileCard({
                 <Button
                   size="icon-xs"
                   variant="ghost-muted"
-                  aria-label={`Download ${file.name}`}
+                  aria-label={`Download ${label}`}
                   onClick={() => ctx.onFileDownload(file)}
                 />
               }
             >
               <DownloadIcon />
             </TooltipTrigger>
-            <TooltipPopup side="top">Download {file.name}</TooltipPopup>
+            <TooltipPopup side="top">Download {label}</TooltipPopup>
           </Tooltip>
         </>
       )}
@@ -855,6 +858,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               {!fileCardsOnly && (unchippedFiles.length > 0 || unknownAttachments.length > 0) ? (
                 <div className="mb-2 flex flex-col gap-1">
                   {unchippedFiles.map((file) => {
+                    const pastedText = file.source?._tag === "pasted-text";
+                    const label = pastedText ? "Pasted text" : file.name;
                     const fileIdentity = (
                       <>
                         <PierreEntryIcon
@@ -862,7 +867,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                           kind="file"
                           theme={ctx.resolvedTheme}
                         />
-                        <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">{label}</span>
+                          {pastedText ? (
+                            <span className="block text-xs text-muted-foreground tabular-nums">
+                              {formatBytes(file.sizeBytes)}
+                            </span>
+                          ) : null}
+                        </span>
                       </>
                     );
                     if (file.downloadable !== false) {
@@ -870,7 +882,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                         <div key={file.id} className="flex min-w-0 items-center gap-1">
                           <button
                             type="button"
-                            aria-label={`Preview ${file.name}`}
+                            aria-label={`Preview ${label}`}
                             onClick={() => ctx.onFileOpen(file)}
                             className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
                           >
@@ -883,14 +895,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                                 <Button
                                   size="icon-xs"
                                   variant="ghost-muted"
-                                  aria-label={`Download ${file.name}`}
+                                  aria-label={`Download ${label}`}
                                   onClick={() => ctx.onFileDownload(file)}
                                 />
                               }
                             >
                               <DownloadIcon />
                             </TooltipTrigger>
-                            <TooltipPopup side="top">Download {file.name}</TooltipPopup>
+                            <TooltipPopup side="top">Download {label}</TooltipPopup>
                           </Tooltip>
                         </div>
                       );
