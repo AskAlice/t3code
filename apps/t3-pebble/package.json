@@ -7,7 +7,7 @@
   ],
   "author": "T3 Code",
   "scripts": {
-    "generate:icons": "NODE_PATH=../scripts/node_modules bun scripts/generate-provider-icons.ts"
+    "generate:icons": "NODE_PATH=../../scripts/node_modules bun scripts/generate-provider-icons.ts"
   },
   "dependencies": {},
   "pebble": {

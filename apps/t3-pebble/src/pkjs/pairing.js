@@ -34,7 +34,16 @@ exports.code = function (input) {
   return parsed ? parsed.code : null;
 };
 
-exports.pair = function (origin, pairingCode, callback) {
+// Pebble needs send, so auto unless the caller asks for a different level.
+var ACCESS = ["read-only", "auto", "full-access"];
+
+exports.pair = function (origin, pairingCode, access, callback) {
+  if (typeof access === "function") {
+    callback = access;
+    access = "auto";
+  }
+  if (access == null) access = "auto";
+  if (ACCESS.indexOf(access) < 0) return callback(new Error("Invalid pairing access"));
   var verifier = crypto.random(32);
   crypto.challenge(verifier, function (error, challenge) {
     if (error) return callback(error);
@@ -71,7 +80,7 @@ exports.pair = function (origin, pairingCode, callback) {
       };
       var decision = {
         authorization: authorization,
-        decision: { _tag: "pairing-code", access: "full-access", code: pairingCode }
+        decision: { _tag: "pairing-code", access: access, code: pairingCode }
       };
       post(
         "/oauth/mcp/decision",

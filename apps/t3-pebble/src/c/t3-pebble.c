@@ -18,7 +18,7 @@ static bool touching;
 static int16_t last_touch_y, touch_velocity;
 static uint32_t last_touch_ms;
 static char expanded_item[160];
-static char titles[MAX_THREADS][100], ids[MAX_THREADS][161];
+static char titles[MAX_THREADS][100], ids[MAX_THREADS][161], active_thread[161];
 static char machines[MAX_THREADS][60], directories[MAX_THREADS][68], harnesses[MAX_THREADS][68], ages[MAX_THREADS][16];
 #define PROVIDER_COUNT 7
 static const char *provider_alias[] = { "codex", "claude", "cursor", "grok", "opencode", "antigravity", "kiro", "claudeAgent" };
@@ -56,11 +56,11 @@ static void send_request(const char *action, const char *thread, const char *mes
   app_message_outbox_send();
 }
 static void dictation_result(DictationSession *session, DictationSessionStatus status, char *transcription, void *context) {
-  if (status == DictationSessionStatusSuccess && count > 0)
-    send_request("send", ids[selected], transcription);
+  if (status == DictationSessionStatusSuccess && active_thread[0])
+    send_request("send", active_thread, transcription);
 }
 static void select_detail(ClickRecognizerRef recognizer, void *context) {
-  if (dictation && count > 0) dictation_session_start(dictation);
+  if (dictation && active_thread[0]) dictation_session_start(dictation);
 }
 static void detail_clicks(void *context) { window_single_click_subscribe(BUTTON_ID_SELECT, select_detail); }
 static GColor text_color(int style) {
@@ -266,7 +266,9 @@ static void detail_unload(Window *window) {
   stop_momentum();
   playing = false; speaker_stop();
   free(audio_data); audio_data = NULL;
+  audio_size = audio_pos = audio_expected = 0;
   if (audio_timer) { app_timer_cancel(audio_timer); audio_timer = NULL; }
+  active_thread[0] = 0;
   layer_destroy(action_layer); action_layer = NULL;
   layer_destroy(chat_layer); chat_layer = NULL;
   scroll_layer_destroy(scroll); scroll = NULL;
@@ -278,6 +280,7 @@ static void choose(int index, void *context) {
   stop_momentum();
   expanded_item[0] = 0;
   selected = index;
+  snprintf(active_thread, sizeof(active_thread), "%s", ids[index]);
   chat_count = 1;
   snprintf(chat[0].type, sizeof(chat[0].type), "reasoning");
   snprintf(chat[0].text, sizeof(chat[0].text), "Loading...");
@@ -295,6 +298,7 @@ static void audio_finished(SpeakerFinishReason reason, void *context) {
   if (playing && reason == SpeakerFinishReasonDone) {
     playing = false;
     free(audio_data); audio_data = NULL;
+    audio_size = audio_pos = audio_expected = 0;
     send_request("audio_done", NULL, NULL);
   }
 }
@@ -329,7 +333,7 @@ static void receive(DictionaryIterator *in, void *context) {
     playing = false; speaker_stop();
     if (audio_timer) { app_timer_cancel(audio_timer); audio_timer = NULL; }
     free(audio_data); audio_data = NULL;
-    audio_size = 0;
+    audio_size = audio_pos = audio_expected = 0;
     if (size && checksum && size->value->uint32 > 0 && size->value->uint32 <= 60000) {
       audio_expected = size->value->uint32; audio_checksum = checksum->value->uint32;
       audio_data = malloc(audio_expected);
@@ -344,9 +348,11 @@ static void receive(DictionaryIterator *in, void *context) {
     } else send_request("audio_retry", NULL, NULL);
   } else if (!strcmp(action->value->cstring, "audio_play")) {
     uint32_t checksum = 2166136261u;
-    for (uint32_t i = 0; i < audio_size; i++) checksum = (checksum ^ audio_data[i]) * 16777619u;
+    if (audio_data)
+      for (uint32_t i = 0; i < audio_size; i++) checksum = (checksum ^ audio_data[i]) * 16777619u;
     if (!audio_data || audio_size != audio_expected || checksum != audio_checksum) {
       free(audio_data); audio_data = NULL;
+      audio_size = audio_pos = audio_expected = 0;
       send_request("audio_retry", NULL, NULL);
     } else {
       audio_pos = 0; pcm_size = pcm_pos = 0;
@@ -377,10 +383,10 @@ static void receive(DictionaryIterator *in, void *context) {
     if (menu) menu_layer_reload_data(menu);
   } else if (!strcmp(action->value->cstring, "chat_clear")) {
     Tuple *id = dict_find(in, MESSAGE_KEY_thread);
-    if (id && count && !strcmp(ids[selected], id->value->cstring)) chat_count = 0;
+    if (id && active_thread[0] && !strcmp(active_thread, id->value->cstring)) chat_count = 0;
   } else if (!strcmp(action->value->cstring, "chat_item")) {
     Tuple *id = dict_find(in, MESSAGE_KEY_thread), *type = dict_find(in, MESSAGE_KEY_title), *body = dict_find(in, MESSAGE_KEY_message);
-    if (id && type && body && count && chat_count < MAX_CHAT && !strcmp(ids[selected], id->value->cstring)) {
+    if (id && type && body && active_thread[0] && chat_count < MAX_CHAT && !strcmp(active_thread, id->value->cstring)) {
       Tuple *summary = dict_find(in, MESSAGE_KEY_summary), *status = dict_find(in, MESSAGE_KEY_status), *item = dict_find(in, MESSAGE_KEY_item);
       snprintf(chat[chat_count].type, sizeof(chat[chat_count].type), "%s", type->value->cstring);
       snprintf(chat[chat_count].text, sizeof(chat[chat_count].text), "%s", body->value->cstring);
@@ -388,6 +394,18 @@ static void receive(DictionaryIterator *in, void *context) {
       snprintf(chat[chat_count].status, sizeof(chat[chat_count].status), "%s", status ? status->value->cstring : "completed");
       snprintf(chat[chat_count].item, sizeof(chat[chat_count].item), "%s", item ? item->value->cstring : "");
       chat_count++;
+    }
+  } else if (!strcmp(action->value->cstring, "detail")) {
+    Tuple *id = dict_find(in, MESSAGE_KEY_thread), *body = dict_find(in, MESSAGE_KEY_message);
+    if (!id || !body || !active_thread[0] || strcmp(active_thread, id->value->cstring)) return;
+    int slot = chat_count == 1 && !strcmp(chat[0].text, "Loading...") ? 0 : chat_count;
+    if (slot < MAX_CHAT) {
+      snprintf(chat[slot].type, sizeof(chat[slot].type), "assistant_message");
+      snprintf(chat[slot].text, sizeof(chat[slot].text), "%s", body->value->cstring);
+      chat[slot].summary[0] = chat[slot].item[0] = 0;
+      snprintf(chat[slot].status, sizeof(chat[slot].status), "completed");
+      if (slot == chat_count) chat_count++;
+      update_chat();
     }
   } else if (!strcmp(action->value->cstring, "chat_show")) {
     update_chat();
@@ -446,7 +464,7 @@ static void detail_tap(int16_t x, int16_t y) {
   GRect frame = layer_get_frame(action_layer);
   if (x >= frame.origin.x - 4 && x <= frame.origin.x + frame.size.w + 4 && y >= frame.origin.y - 4 && y <= frame.origin.y + frame.size.h + 4) {
     if (detail_at_bottom()) {
-      if (dictation && count > 0) dictation_session_start(dictation);
+      if (dictation && active_thread[0]) dictation_session_start(dictation);
     } else {
       int16_t height = layer_get_bounds(scroll_layer_get_layer(scroll)).size.h;
       set_offset(scroll, height - scroll_layer_get_content_size(scroll).h, true);
@@ -493,7 +511,7 @@ static void on_touch(const TouchEvent *event, void *context) {
     if (abs(dy) > 8 && abs(dy) > abs(dx)) {
       uint32_t now = touch_time_ms(), elapsed = now - last_touch_ms;
       if (elapsed > 0 && elapsed < 150) {
-        int velocity = (event->y - last_touch_y) * 1000 / elapsed;
+        int velocity = (event->y - last_touch_y) * 1000 / (int32_t)elapsed;
         if (velocity > 1800) velocity = 1800;
         if (velocity < -1800) velocity = -1800;
         touch_velocity = (touch_velocity + velocity) / 2;

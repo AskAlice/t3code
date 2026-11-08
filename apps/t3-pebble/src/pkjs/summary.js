@@ -1,3 +1,4 @@
+var cap = require("./format.js").cap;
 var WORK = [
   "reasoning",
   "command_execution",
@@ -32,26 +33,45 @@ function action(item) {
   return "other";
 }
 
-function count(action, items) {
-  if (action !== "edit") return items.length;
+// Activity items carry paths as changedFiles, fileName, or the first line of display text.
+function paths(item) {
+  if (Array.isArray(item.changedFiles) && item.changedFiles.length) return item.changedFiles;
+  if (item.fileName) return [item.fileName];
+  var first = String(item.text || "")
+    .split("\n")[0]
+    .trim();
+  return first ? [first] : [];
+}
+
+function edits(items) {
   var files = {},
     bare = 0;
   for (var i = 0; i < items.length; i++) {
-    if (!items[i].changedFiles || !items[i].changedFiles.length) bare++;
-    else for (var j = 0; j < items[i].changedFiles.length; j++) files[items[i].changedFiles[j]] = 1;
+    var list = paths(items[i]);
+    if (!list.length) bare++;
+    else for (var j = 0; j < list.length; j++) files[list[j]] = 1;
   }
-  return Object.keys(files).length + bare;
+  return { files: Object.keys(files).length, bare: bare };
 }
 
-function label(action, n) {
-  var one = n === 1;
+function label(action, items) {
+  var n = items.length,
+    one = n === 1;
   switch (action) {
     case "command":
       return "Ran " + n + (one ? " command" : " commands");
     case "read":
       return "Read " + n + (one ? " file" : " files");
-    case "edit":
-      return "Changed " + n + (one ? " file" : " files");
+    case "edit": {
+      var seen = edits(items),
+        parts = [];
+      if (seen.files) parts.push("Changed " + seen.files + (seen.files === 1 ? " file" : " files"));
+      if (seen.bare)
+        parts.push(
+          (parts.length ? "made " : "Made ") + seen.bare + (seen.bare === 1 ? " edit" : " edits")
+        );
+      return parts.join(" and ");
+    }
     case "search":
       return "Searched the web " + n + (one ? " time" : " times");
     case "code-search":
@@ -94,7 +114,7 @@ function groupSummary(items) {
       index: index,
       count: grouped[kind].length,
       priority: priority(kind),
-      label: label(kind, count(kind, grouped[kind]))
+      label: label(kind, grouped[kind])
     };
   });
   var selected = categories
@@ -128,12 +148,13 @@ function group(items, format, namespace) {
     var fallback = namespace && first.position != null ? namespace + "#" + first.position : "";
     out.push({
       type: "work_group",
-      text: run
-        .map(function (item) {
-          return format(item.text || item.title || "", item.type);
-        })
-        .join("\n\n")
-        .slice(0, 900),
+      text: cap(
+        run
+          .map(function (item) {
+            return format(item.text || item.title || "", item.type);
+          })
+          .join("\n\n")
+      ),
       item: first.itemId || fallback,
       summary: groupSummary(run),
       status: "completed"

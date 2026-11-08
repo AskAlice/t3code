@@ -136,5 +136,56 @@ test("namespaces group ids by thread identity and source position when members l
 test("retains up to 900 formatted body characters", () => {
   const strip = (text: string) => text.replace(/[\x01-\x07]/g, "");
   expect(strip(format("z".repeat(950), "assistant_message"))).toHaveLength(900);
-  expect(strip(format("z".repeat(950), "command_execution"))).toHaveLength(900);
+  expect(strip(format("z".repeat(950), "command_execution")).length).toBeGreaterThanOrEqual(890);
+  expect(bytes(format("z".repeat(950), "command_execution"))).toBeLessThanOrEqual(900);
+});
+
+const bytes = (text: string) => Buffer.byteLength(text, "utf8");
+
+test("caps styled and multibyte messages at 900 UTF-8 bytes with a style reset", () => {
+  const bold = format("**" + "字".repeat(400) + "**", "assistant_message");
+  expect(bytes(bold)).toBeLessThanOrEqual(900);
+  expect(bold.endsWith("\x01")).toBe(true);
+  expect(bold).not.toContain("\uFFFD");
+  expect(Buffer.from(bold, "utf8").toString("utf8")).toBe(bold);
+
+  const prose = format("😀".repeat(400), "assistant_message");
+  expect(bytes(prose)).toBeLessThanOrEqual(900);
+  expect(Buffer.from(prose, "utf8").toString("utf8")).toBe(prose);
+
+  const command = format("echo " + "字".repeat(400), "command_execution");
+  expect(bytes(command)).toBeLessThanOrEqual(900);
+  expect(command.endsWith("\x01")).toBe(true);
+
+  expect(bytes(format("字".repeat(300), "assistant_message"))).toBe(900);
+  expect(format("字".repeat(300), "assistant_message")).not.toContain("\x01");
+});
+
+test("repeated edits without changedFiles do not claim distinct files", () => {
+  const edits = summary.group(
+    [
+      completed("e1", "file_change", { text: "src/a.ts\n+1 -0" }),
+      completed("e2", "file_change", { text: "src/a.ts\n+2 -1" }),
+    ],
+    format,
+  );
+  expect(edits[0].summary).toBe("Changed 1 file");
+  const paths = summary.group(
+    [
+      completed("e1", "file_change", { text: "src/a.ts\n+1 -0" }),
+      completed("e2", "file_change", { text: "src/b.ts\n+2 -1" }),
+    ],
+    format,
+  );
+  expect(paths[0].summary).toBe("Changed 2 files");
+  const bare = summary.group(
+    [completed("e1", "file_change"), completed("e2", "file_change")],
+    format,
+  );
+  expect(bare[0].summary).toBe("Made 2 edits");
+  const mixed = summary.group(
+    [completed("e1", "file_change", { fileName: "src/a.ts" }), completed("e2", "file_change")],
+    format,
+  );
+  expect(mixed[0].summary).toBe("Changed 1 file and made 1 edit");
 });

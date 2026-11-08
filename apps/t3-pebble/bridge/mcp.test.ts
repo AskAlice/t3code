@@ -153,3 +153,102 @@ test("resets the session after an HTTP failure and initializes again", async () 
     restore();
   }
 });
+
+function gateClientResponses(prefix: string) {
+  const Base = (globalThis as { XMLHttpRequest?: any }).XMLHttpRequest;
+  const handlers: (() => void)[] = [];
+  class Gated extends Base {
+    send(body?: string | null) {
+      const handler = (this as any).onload;
+      if (String((this as any).url).startsWith(prefix))
+        (this as any).onload = () => handlers.push(handler);
+      super.send(body);
+    }
+  }
+  (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = Gated;
+  return () => {
+    for (const handler of handlers.splice(0)) handler();
+  };
+}
+
+test("reconfiguring cancels in-flight initialization and ignores the stale response", async () => {
+  const restore = installXhr();
+  let oldArrived!: () => void;
+  const arrived = new Promise<void>((resolve) => (oldArrived = resolve));
+  let oldNotifications = 0;
+  const old = await serve(async (request) => {
+    const body = await request.json<any>();
+    if (body.method === "notifications/initialized") {
+      oldNotifications++;
+      return { status: 202 };
+    }
+    if (body.method === "initialize") oldArrived();
+    return json(
+      { jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-03-26" } },
+      { headers: { "mcp-session-id": "stale-session" } },
+    );
+  });
+  const currentSessions: (string | null)[] = [];
+  const current = await serve(async (request) => {
+    const body = await request.json<any>();
+    if (body.method === "notifications/initialized") return { status: 202 };
+    currentSessions.push(request.headers.get("mcp-session-id"));
+    const result =
+      body.method === "initialize"
+        ? { protocolVersion: "2025-03-26" }
+        : { structuredContent: { threads: [], nextCursor: null } };
+    return json(
+      { jsonrpc: "2.0", id: body.id, result },
+      { headers: { "mcp-session-id": "current-session" } },
+    );
+  });
+  const release = gateClientResponses(`http://127.0.0.1:${old.port}`);
+  try {
+    mcp.configure({ origin: `http://127.0.0.1:${old.port}`, token: "old" });
+    const stale = run<any>((callback) => mcp.threads(0, callback)).catch((error: Error) => error);
+    await arrived;
+    mcp.configure({ origin: `http://127.0.0.1:${current.port}`, token: "current" });
+    expect((await stale).message).toBe("MCP configuration changed");
+    release();
+    await run<any>((callback) => mcp.threads(0, callback));
+    expect(currentSessions[0]).toBeNull();
+    expect(currentSessions.slice(1).every((session) => session === "current-session")).toBe(true);
+    expect(oldNotifications).toBe(0);
+  } finally {
+    old.stop();
+    current.stop();
+    restore();
+  }
+});
+
+test("includes a zero cursor for a 26-item read and omits it below that", async () => {
+  const restore = installXhr();
+  let itemCount = 26;
+  const readArguments: Record<string, unknown>[] = [];
+  const upstream = await serve(async (request) => {
+    const body = await request.json<any>();
+    if (body.method === "notifications/initialized") return { status: 202 };
+    if (body.method === "tools/call" && body.params.name === "t3_thread_read")
+      readArguments.push(body.params.arguments);
+    const result =
+      body.method === "initialize"
+        ? { protocolVersion: "2025-03-26" }
+        : body.params.name === "t3_thread_read"
+          ? body.params.arguments.limit === 1
+            ? { thread: { itemCount }, items: [] }
+            : { items: [] }
+          : {};
+    return json({ jsonrpc: "2.0", id: body.id, result });
+  });
+  try {
+    mcp.configure({ origin: `http://127.0.0.1:${upstream.port}`, token: "mcp-test" });
+    await run<any>((callback) => mcp.read("1", callback));
+    expect(readArguments.at(-1)).toMatchObject({ afterPosition: 0, limit: 25 });
+    itemCount = 25;
+    await run<any>((callback) => mcp.read("1", callback));
+    expect(readArguments.at(-1)).not.toHaveProperty("afterPosition");
+  } finally {
+    upstream.stop();
+    restore();
+  }
+});

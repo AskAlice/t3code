@@ -1,20 +1,29 @@
 var xhr = require("./xhr.js");
 var PROTOCOL = "2025-03-26";
+var CANCELLED = "MCP configuration changed";
 var origin = "",
   token = "",
   session = null,
   protocolVersion = PROTOCOL,
   sequence = 0,
+  generation = 0,
   connecting = false,
   waiting = [],
   metadata = null;
 
+function cancelled() {
+  return new Error(CANCELLED);
+}
+
 function reset() {
+  generation++;
   session = null;
   protocolVersion = PROTOCOL;
   connecting = false;
-  waiting = [];
   metadata = null;
+  var callbacks = waiting;
+  waiting = [];
+  for (var i = 0; i < callbacks.length; i++) callbacks[i](cancelled());
 }
 
 exports.configure = function (next) {
@@ -46,6 +55,7 @@ function payload(text, contentType) {
 }
 
 function rpc(method, params, callback) {
+  var callGeneration = generation;
   xhr(
     {
       method: "POST",
@@ -56,6 +66,7 @@ function rpc(method, params, callback) {
       timeout: 20000
     },
     function (error, text, request) {
+      if (callGeneration !== generation) return callback(cancelled());
       if (error) {
         session = null;
         return callback(error);
@@ -77,6 +88,7 @@ function rpc(method, params, callback) {
 }
 
 function initialize(callback) {
+  var callGeneration = generation;
   rpc(
     "initialize",
     {
@@ -85,6 +97,7 @@ function initialize(callback) {
       clientInfo: { name: "t3-pebble", version: "0.1.0" }
     },
     function (error, initialized) {
+      if (callGeneration !== generation) return callback(cancelled());
       if (error) return callback(error);
       if (initialized && initialized.protocolVersion) protocolVersion = initialized.protocolVersion;
       xhr(
@@ -97,6 +110,7 @@ function initialize(callback) {
           timeout: 20000
         },
         function (error) {
+          if (callGeneration !== generation) return callback(cancelled());
           if (error) {
             session = null;
             return callback(error);
@@ -113,7 +127,9 @@ function connect(callback) {
   waiting.push(callback);
   if (connecting) return;
   connecting = true;
+  var callGeneration = generation;
   initialize(function (error) {
+    if (callGeneration !== generation) return;
     connecting = false;
     var callbacks = waiting;
     waiting = [];
@@ -188,7 +204,7 @@ exports.read = function (threadId, callback) {
     var count = head && head.thread ? head.thread.itemCount : 0;
     var afterPosition = Math.max(0, count - 26);
     var args = { threadId: threadId, view: "activity", limit: 25, maxCharsPerItem: 4000 };
-    if (afterPosition) args.afterPosition = afterPosition;
+    if (count > 25) args.afterPosition = afterPosition;
     call("t3_thread_read", args, callback);
   });
 };

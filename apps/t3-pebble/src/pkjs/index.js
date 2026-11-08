@@ -22,28 +22,57 @@ var queue = [],
   retries = 0,
   readGeneration = 0,
   reading = false,
+  speechGeneration = 0,
+  listGeneration = 0,
   lastTimeline = "";
+var TRANSFER = ["audio", "audio_start", "audio_play"];
 var namespaces = {};
 function send(payload) {
   queue.push(payload);
   flush();
 }
+function abortAudio() {
+  audio = null;
+  retries = 0;
+  queue = queue.filter(function (packet) {
+    return TRANSFER.indexOf(packet.action) < 0;
+  });
+}
 function flush() {
   if (busy || !queue.length) return;
   busy = true;
-  Pebble.sendAppMessage(
-    queue.shift(),
-    function () {
-      busy = false;
-      flush();
-    },
-    function () {
-      busy = false;
-      flush();
-    }
-  );
+  var packet = queue[0],
+    attempts = 0;
+  function deliver() {
+    Pebble.sendAppMessage(
+      packet,
+      function () {
+        queue.shift();
+        busy = false;
+        flush();
+      },
+      function () {
+        if (attempts++ < 2) return deliver();
+        queue.shift();
+        if (TRANSFER.indexOf(packet.action) >= 0) abortAudio();
+        busy = false;
+        flush();
+      }
+    );
+  }
+  deliver();
+}
+// Server text is short and stripped of URLs and token-shaped runs before it reaches the watch.
+function reason(error) {
+  var text = String((error && error.message) || "")
+    .replace(/[?#]\S*/g, "")
+    .replace(/\b[A-Za-z0-9_-]{24,}\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text ? ": " + format.truncate(text, 80) : "";
 }
 function connect() {
+  listGeneration++;
   mcp.configure({ origin: storage.origin(), token: storage.token() });
 }
 function notify(title, body) {
@@ -61,6 +90,7 @@ function age(updatedAt) {
   return Math.floor(seconds / 604800) + "w";
 }
 function list() {
+  var generation = ++listGeneration;
   if (!storage.token()) {
     send({ action: "clear" });
     send({ action: "thread", thread: "", title: "Pair in phone settings" });
@@ -68,8 +98,9 @@ function list() {
     return;
   }
   mcp.threads(pages[page], function (err, result) {
+    if (generation !== listGeneration || focused) return;
     send({ action: "clear" });
-    if (err) send({ action: "thread", thread: "", title: "Connection failed" });
+    if (err) send({ action: "thread", thread: "", title: "Connection failed" + reason(err) });
     else {
       if (page) send({ action: "thread", thread: "__previous", title: "Previous page" });
       groups(result.threads).forEach(function (group) {
@@ -104,8 +135,11 @@ function mulaw(sample) {
   return ~(sign | (exponent << 4) | ((sample >> (exponent + 3)) & 15)) & 255;
 }
 function speak(text, thread) {
+  var generation = ++speechGeneration;
+  audio = null;
+  retries = 0;
   eleven.speak(text.slice(0, 4000), function (err, data) {
-    if (err || focused !== thread || !data) return;
+    if (generation !== speechGeneration || err || focused !== thread || !data) return;
     var pcm = new DataView(data);
     audio = new Uint8Array(Math.floor(pcm.byteLength / 2));
     for (var i = 0; i < audio.length; i++) audio[i] = mulaw(pcm.getInt16(i * 2, true));
@@ -144,7 +178,11 @@ function read(thread, baseline) {
     if (generation !== readGeneration || focused !== thread) return;
     reading = false;
     if (err) {
-      send({ action: "detail", thread: thread, message: "Connection failed" });
+      send({
+        action: "detail",
+        thread: thread,
+        message: "Connection failed" + reason(err)
+      });
       return;
     }
     var messages = result.items.filter(function (item) {
@@ -173,12 +211,12 @@ function read(thread, baseline) {
       )
       .slice(-8)
       .map(function (item) {
-        if (item.type === "work_group") return item;
+        var grouped = item.type === "work_group";
         return {
           type: item.type,
-          text: format(item.text || item.title || "", item.type),
-          item: item.itemId || "",
-          summary: summary(item),
+          text: grouped ? item.text : format(item.text || item.title || "", item.type),
+          item: format.truncate(grouped ? item.item : item.itemId || "", 150),
+          summary: format.truncate(grouped ? item.summary : summary(item), 150),
           status: item.status || ""
         };
       });
@@ -237,6 +275,7 @@ Pebble.addEventListener("appmessage", function (event) {
     lastItem = null;
     lastTimeline = "";
     audio = null;
+    speechGeneration++;
     readGeneration++;
     reading = false;
     if (timer) clearInterval(timer);
@@ -248,6 +287,7 @@ Pebble.addEventListener("appmessage", function (event) {
   if (data.action === "close") {
     focused = null;
     audio = null;
+    speechGeneration++;
     readGeneration++;
     reading = false;
     if (timer) clearInterval(timer);
@@ -267,7 +307,12 @@ Pebble.addEventListener("appmessage", function (event) {
   }
   if (data.action === "send" && data.thread && data.message) {
     mcp.send(data.thread, data.message, function (err) {
-      if (err) send({ action: "detail", thread: data.thread, message: "Could not send message" });
+      if (err && focused === data.thread)
+        send({
+          action: "detail",
+          thread: data.thread,
+          message: "Could not send message" + reason(err)
+        });
       else if (focused === data.thread) read(focused, false);
     });
   }
@@ -279,14 +324,28 @@ Pebble.addEventListener("showConfiguration", function () {
 Pebble.addEventListener("webviewclosed", function (event) {
   var result = settings.parse(event.response);
   if (!result) return;
+  if (result.clearKey) storage.saveElevenKey("");
   if (result.key) storage.saveElevenKey(result.key);
+  if (result.unpair) {
+    focused = null;
+    audio = null;
+    speechGeneration++;
+    readGeneration++;
+    reading = false;
+    if (timer) clearInterval(timer);
+    timer = null;
+    storage.savePairing("", "");
+    connect();
+    list();
+    return;
+  }
   if (!result.url) return;
   var parsed = pairing.parse(result.url);
   if (!parsed) {
     notify("Pairing failed", "Paste the full pairing URL.");
     return;
   }
-  pairing.pair(parsed.origin, parsed.code, function (err, token) {
+  pairing.pair(parsed.origin, parsed.code, result.access, function (err, token) {
     if (err) {
       notify("Pairing failed", "Check the URL and its permissions.");
       return;
