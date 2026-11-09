@@ -20,6 +20,7 @@ const cases: Record<string, () => Promise<unknown>> = {
   projectEffort: () => import("../src/pkjs/index.js?wizard=project-effort"),
   launchError: () => import("../src/pkjs/index.js?wizard=launch-error"),
   stale: () => import("../src/pkjs/index.js?wizard=stale"),
+  duplicate: () => import("../src/pkjs/index.js?wizard=duplicate"),
 };
 
 async function setup(caseName: keyof typeof cases) {
@@ -319,6 +320,7 @@ test("skips the effort step and launches a scratch thread when the model has no 
       title: "New thread",
       scratch: true,
       modelSelection: { instanceId: "inst-codex", model: "gpt-5" },
+      clientRequestId: expect.stringMatching(/^pebble-wizard-\d+$/),
     });
     expect(harness.attempts.find((message) => message.action === "open_thread")).toMatchObject({
       thread: "thread-1",
@@ -386,6 +388,7 @@ test("launches in the picked project with the chosen effort on a linked machine"
         model: "m",
         options: [{ id: "reasoningEffort", value: "high" }],
       },
+      clientRequestId: expect.stringMatching(/^pebble-wizard-\d+$/),
     });
   } finally {
     harness.restore();
@@ -464,6 +467,41 @@ test("ignores wizard responses that arrive after a cancel or restart", async () 
     harness.drain();
 
     expect(harness.steps().map((step) => step.thread)).toEqual(["machine"]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("a duplicated final pick launches one thread", async () => {
+  const harness = await setup("duplicate");
+  try {
+    harness.script.capabilities = {
+      providers: [
+        {
+          providerInstanceId: "inst",
+          driverKind: "opencode",
+          displayName: "OpenCode",
+          models: [{ id: "m" }],
+        },
+      ],
+    };
+    harness.newWizard();
+    harness.drain();
+    harness.pick("machine", "env-local");
+    harness.drain();
+    harness.pick("dir", "__scratch__");
+    harness.drain();
+    harness.pick("provider", "inst");
+    harness.drain();
+
+    harness.script.hold = "t3_thread_launch";
+    harness.pick("model", "m");
+    harness.pick("model", "m");
+    harness.drain();
+
+    expect(harness.calls.filter((call) => call.name === "t3_thread_launch")).toHaveLength(1);
+    harness.release();
+    expect(harness.attempts.filter((message) => message.action === "open_thread")).toHaveLength(1);
   } finally {
     harness.restore();
   }

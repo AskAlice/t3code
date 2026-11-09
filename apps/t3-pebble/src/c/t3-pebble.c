@@ -192,6 +192,12 @@ static void draw_round_button(GContext *ctx, GPoint center) {
   graphics_context_set_fill_color(ctx, GColorWhite);
   graphics_context_set_stroke_color(ctx, GColorWhite);
 }
+static void draw_plus_glyph(GContext *ctx, GPoint center) {
+  graphics_context_set_stroke_width(ctx, 3);
+  graphics_draw_line(ctx, GPoint(center.x - 7, center.y), GPoint(center.x + 7, center.y));
+  graphics_draw_line(ctx, GPoint(center.x, center.y - 7), GPoint(center.x, center.y + 7));
+  graphics_context_set_stroke_width(ctx, 1);
+}
 static void draw_mic_glyph(GContext *ctx, GPoint center) {
   graphics_fill_rect(ctx, GRect(center.x - 3, center.y - 10, 6, 12), 3, GCornersAll);
   graphics_draw_line(ctx, GPoint(center.x - 7, center.y - 4), GPoint(center.x - 7, center.y + 2));
@@ -592,7 +598,7 @@ static void draw_new_button(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
   GPoint center = GPoint(bounds.size.w / 2, bounds.size.h / 2);
   draw_round_button(ctx, center);
-  draw_mic_glyph(ctx, center);
+  draw_plus_glyph(ctx, center);
 }
 static bool new_button_hit(int16_t x, int16_t y) {
   GRect bounds = layer_get_bounds(window_get_root_layer(list_window));

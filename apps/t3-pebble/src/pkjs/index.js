@@ -379,15 +379,24 @@ function wizardEfforts(state) {
   wizardShow(state, "effort", "Effort", rows);
 }
 function wizardLaunch(state) {
-  if (!wizardGuard(state)) return;
+  if (!wizardGuard(state) || state.launching) return;
+  state.launching = true;
   var selection = { instanceId: state.providerInstanceId, model: state.model };
   if (state.effortOptionId) selection.options = [{ id: state.effortOptionId, value: state.effort }];
-  var args = wizardTarget(state, { title: "New thread", modelSelection: selection });
+  var args = wizardTarget(state, {
+    title: "New thread",
+    modelSelection: selection,
+    // A retried pick must not create a second thread.
+    clientRequestId: "pebble-wizard-" + state.generation
+  });
   if (state.dir === "__scratch__") args.scratch = true;
   else args.projectId = state.dir;
   mcp.call("t3_thread_launch", args, function (error, result) {
     if (!wizardGuard(state)) return;
-    if (error) return wizardError(state, error);
+    if (error) {
+      state.launching = false;
+      return wizardError(state, error);
+    }
     wizard = null;
     wizardGeneration++;
     send({ action: "open_thread", thread: result.threadId, title: "New thread" });
@@ -407,6 +416,7 @@ function wizardStart() {
     model: "",
     effortOptionId: "",
     effort: "",
+    launching: false,
     capabilities: null
   };
   wizardMachines(wizard);
