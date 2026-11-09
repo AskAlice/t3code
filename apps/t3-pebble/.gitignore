@@ -4,3 +4,7 @@
 .tls/
 build/
 .lock-waf_*
+# Local pairing captures: never commit a token or a machine-specific config.
+.pairing*
+*.pairing-url
+src/pkjs/config.json
