@@ -302,11 +302,8 @@ static void open_thread(const char *id) {
   stop_momentum();
   expanded_item[0] = 0;
   snprintf(active_thread, sizeof(active_thread), "%s", id);
-  chat_count = 1;
-  snprintf(chat[0].type, sizeof(chat[0].type), "reasoning");
-  snprintf(chat[0].text, sizeof(chat[0].text), "Loading...");
-  snprintf(chat[0].status, sizeof(chat[0].status), "running");
-  chat[0].item[0] = chat[0].summary[0] = 0;
+  // No placeholder: an empty thread stays blank instead of showing "Loading" forever.
+  chat_count = 0;
   window_stack_push(detail_window, true);
   send_request("read", id, NULL);
 }
@@ -479,13 +476,12 @@ static void receive(DictionaryIterator *in, void *context) {
   } else if (!strcmp(action->value->cstring, "detail")) {
     Tuple *id = dict_find(in, MESSAGE_KEY_thread), *body = dict_find(in, MESSAGE_KEY_message);
     if (!id || !body || !active_thread[0] || strcmp(active_thread, id->value->cstring)) return;
-    int slot = chat_count == 1 && !strcmp(chat[0].text, "Loading...") ? 0 : chat_count;
-    if (slot < MAX_CHAT) {
-      snprintf(chat[slot].type, sizeof(chat[slot].type), "assistant_message");
-      snprintf(chat[slot].text, sizeof(chat[slot].text), "%s", body->value->cstring);
-      chat[slot].summary[0] = chat[slot].item[0] = 0;
-      snprintf(chat[slot].status, sizeof(chat[slot].status), "completed");
-      if (slot == chat_count) chat_count++;
+    if (chat_count < MAX_CHAT) {
+      snprintf(chat[chat_count].type, sizeof(chat[chat_count].type), "assistant_message");
+      snprintf(chat[chat_count].text, sizeof(chat[chat_count].text), "%s", body->value->cstring);
+      chat[chat_count].summary[0] = chat[chat_count].item[0] = 0;
+      snprintf(chat[chat_count].status, sizeof(chat[chat_count].status), "completed");
+      chat_count++;
       update_chat();
     }
   } else if (!strcmp(action->value->cstring, "chat_show")) {

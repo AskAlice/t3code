@@ -500,3 +500,25 @@ test("clears the saved key and pairing from settings, keeping blank fields", asy
     harness.restore();
   }
 });
+
+test("an empty thread clears the loading placeholder", async () => {
+  const harness = await setup();
+  try {
+    await import("../src/pkjs/index.js?case=empty-thread");
+    harness.ready();
+    harness.drain();
+    harness.script.items = [];
+    harness.script.threadStatus = "idle";
+    harness.open("thread-empty");
+    harness.drain();
+
+    expect(
+      harness.attempts.some(
+        (message) => message.action === "chat_clear" && message.thread === "thread-empty",
+      ),
+    ).toBe(true);
+    expect(harness.attempts.at(-1)?.action).toBe("chat_show");
+  } finally {
+    harness.restore();
+  }
+});
