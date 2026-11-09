@@ -209,7 +209,6 @@ function read(thread, baseline) {
         format,
         namespaces[thread] || ""
       )
-      .slice(-8)
       .map(function (item) {
         var grouped = item.type === "work_group";
         return {
@@ -219,7 +218,12 @@ function read(thread, baseline) {
           summary: format.truncate(grouped ? item.summary : summary(item), 150),
           status: item.status || ""
         };
-      });
+      })
+      // Empty placeholders and empty work groups would render as bare "Agent" bubbles.
+      .filter(function (entry) {
+        return entry.text;
+      })
+      .slice(-8);
     if (
       result.thread &&
       ["running", "starting", "preparing"].indexOf(result.thread.status) >= 0 &&
@@ -255,12 +259,196 @@ function read(thread, baseline) {
     } else if (baseline) lastItem = "";
   });
 }
+var wizard = null,
+  wizardGeneration = 0;
+function wizardGuard(state) {
+  return wizard === state && state.generation === wizardGeneration;
+}
+function wizardError(state, error) {
+  if (!wizardGuard(state)) return;
+  send({ action: "wizard_error", title: format.truncate("New thread failed" + reason(error), 60) });
+}
+function wizardTarget(state, args) {
+  if (state.environmentId && state.environmentId !== state.currentEnvironmentId)
+    args.environmentId = state.environmentId;
+  return args;
+}
+function wizardShow(state, step, header, rows) {
+  if (!wizardGuard(state)) return;
+  state.step = step;
+  send({ action: "wizard_step", thread: step, title: header });
+  rows.forEach(function (row) {
+    send({
+      action: "wizard_row",
+      title: format.truncate(row.title, 40),
+      item: row.item,
+      harness: row.harness || ""
+    });
+  });
+  send({ action: "wizard_show" });
+}
+function wizardMachines(state) {
+  mcp.call("t3_environment_read", {}, function (error, current) {
+    if (!wizardGuard(state)) return;
+    if (error) return wizardError(state, error);
+    state.currentEnvironmentId = current.environmentId || "";
+    var rows = [{ title: current.label || "This machine", item: state.currentEnvironmentId }];
+    mcp.call("t3_environment_links", {}, function (error, linked) {
+      if (!wizardGuard(state)) return;
+      if (!error)
+        (linked.links || []).forEach(function (link) {
+          if (link.status === "reachable" && link.environmentId !== state.currentEnvironmentId)
+            rows.push({ title: link.label || link.environmentId, item: link.environmentId });
+        });
+      wizardShow(state, "machine", "Machine", rows);
+    });
+  });
+}
+function wizardProjects(state) {
+  var rows = [{ title: "No directory", item: "__scratch__" }];
+  function page(cursor) {
+    mcp.call(
+      "t3_project_list",
+      wizardTarget(state, { cursor: cursor, limit: 100 }),
+      function (error, result) {
+        if (!wizardGuard(state)) return;
+        if (error) return wizardError(state, error);
+        var projects = result.projects || [];
+        for (var i = 0; i < projects.length && rows.length < 21; i++)
+          rows.push({
+            title:
+              (projects[i].workspaceRoot || "").replace(/\/$/, "").split("/").pop() ||
+              projects[i].title ||
+              projects[i].id,
+            item: projects[i].id
+          });
+        if (result.nextCursor != null && rows.length < 21) return page(result.nextCursor);
+        wizardShow(state, "dir", "Project", rows);
+      }
+    );
+  }
+  page(0);
+}
+function wizardProvider(state) {
+  var providers = (state.capabilities && state.capabilities.providers) || [];
+  for (var i = 0; i < providers.length; i++)
+    if (providers[i].providerInstanceId === state.providerInstanceId) return providers[i];
+  return null;
+}
+function wizardProviders(state) {
+  mcp.call("orchestrator_capabilities", wizardTarget(state, {}), function (error, result) {
+    if (!wizardGuard(state)) return;
+    if (error) return wizardError(state, error);
+    state.capabilities = result || {};
+    var providers = result.providers || [];
+    var rows = providers.map(function (provider) {
+      return {
+        title: provider.displayName || provider.driverKind,
+        item: provider.providerInstanceId,
+        harness: provider.driverKind
+      };
+    });
+    wizardShow(state, "provider", "Provider", rows);
+  });
+}
+function wizardModels(state) {
+  var provider = wizardProvider(state),
+    models = (provider && provider.models) || [],
+    rows = [];
+  for (var i = 0; i < models.length && i < 20; i++)
+    rows.push({ title: models[i].label || models[i].id, item: models[i].id });
+  wizardShow(state, "model", "Model", rows);
+}
+function wizardEffortOption(state) {
+  var provider = wizardProvider(state),
+    models = (provider && provider.models) || [];
+  for (var i = 0; i < models.length; i++) {
+    if (models[i].id !== state.model) continue;
+    var options = models[i].options || [];
+    for (var j = 0; j < options.length; j++) if (/effort/i.test(options[j].id)) return options[j];
+  }
+  return null;
+}
+function wizardEfforts(state) {
+  var option = wizardEffortOption(state);
+  if (!option) return wizardLaunch(state);
+  state.effortOptionId = option.id;
+  var rows = (option.values || []).map(function (value) {
+    return { title: String(value), item: String(value) };
+  });
+  wizardShow(state, "effort", "Effort", rows);
+}
+function wizardLaunch(state) {
+  if (!wizardGuard(state)) return;
+  var selection = { instanceId: state.providerInstanceId, model: state.model };
+  if (state.effortOptionId) selection.options = [{ id: state.effortOptionId, value: state.effort }];
+  var args = wizardTarget(state, { title: "New thread", modelSelection: selection });
+  if (state.dir === "__scratch__") args.scratch = true;
+  else args.projectId = state.dir;
+  mcp.call("t3_thread_launch", args, function (error, result) {
+    if (!wizardGuard(state)) return;
+    if (error) return wizardError(state, error);
+    wizard = null;
+    wizardGeneration++;
+    send({ action: "open_thread", thread: result.threadId, title: "New thread" });
+    list();
+  });
+}
+function wizardStart() {
+  wizardGeneration++;
+  wizard = {
+    generation: wizardGeneration,
+    step: "",
+    currentEnvironmentId: "",
+    environmentId: "",
+    dir: "",
+    providerInstanceId: "",
+    driverKind: "",
+    model: "",
+    effortOptionId: "",
+    effort: "",
+    capabilities: null
+  };
+  wizardMachines(wizard);
+}
+function wizardPick(step, item) {
+  var state = wizard;
+  if (!state || state.step !== step) return;
+  if (step === "machine") {
+    state.environmentId = item;
+    wizardProjects(state);
+  } else if (step === "dir") {
+    state.dir = item;
+    wizardProviders(state);
+  } else if (step === "provider") {
+    var provider = null,
+      original = state.providerInstanceId;
+    state.providerInstanceId = item;
+    provider = wizardProvider(state);
+    state.driverKind = (provider && provider.driverKind) || "";
+    if (!provider) state.providerInstanceId = original;
+    wizardModels(state);
+  } else if (step === "model") {
+    state.model = item;
+    wizardEfforts(state);
+  } else if (step === "effort") {
+    state.effort = item;
+    wizardLaunch(state);
+  }
+}
+
 Pebble.addEventListener("ready", function () {
   connect();
   list();
 });
 Pebble.addEventListener("appmessage", function (event) {
   var data = event.payload;
+  if (data.action === "new") wizardStart();
+  if (data.action === "wizard_pick") wizardPick(data.thread, data.item);
+  if (data.action === "close_wizard") {
+    wizardGeneration++;
+    wizard = null;
+  }
   if (data.action === "list") list();
   if (data.action === "next" && nextPage != null) {
     pages[++page] = nextPage;

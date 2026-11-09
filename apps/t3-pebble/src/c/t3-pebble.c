@@ -33,6 +33,11 @@ static const uint32_t provider_logo_ids[PROVIDER_COUNT][2] = {
   { RESOURCE_ID_PROVIDER_KIRO_BLACK, RESOURCE_ID_PROVIDER_KIRO_WHITE },
 };
 static GBitmap *provider_logos[PROVIDER_COUNT][2];
+static int provider_index(const char *harness) {
+  for (size_t i = 0; i < sizeof(provider_alias) / sizeof(provider_alias[0]); i++)
+    if (!strcmp(harness, provider_alias[i])) return provider_alias_index[i];
+  return -1;
+}
 static char section_titles[MAX_SECTIONS][40];
 static int16_t section_start[MAX_SECTIONS], section_size[MAX_SECTIONS];
 static int count, selected, section_count, thread_section;
@@ -46,6 +51,13 @@ static AppTimer *audio_timer, *momentum_timer;
 static ScrollLayer *momentum_target;
 static int momentum_velocity, momentum_remainder;
 static bool playing;
+#define MAX_WIZARD 24
+static Window *wizard_window;
+static MenuLayer *wizard_menu;
+static Layer *new_button_layer;
+static char wizard_step[80], wizard_title[80];
+static char wizard_labels[MAX_WIZARD][80], wizard_rows[MAX_WIZARD][160], wizard_harnesses[MAX_WIZARD][24];
+static int wizard_count;
 
 static void send_request(const char *action, const char *thread, const char *message) {
   DictionaryIterator *out;
@@ -172,23 +184,29 @@ static bool detail_at_bottom(void) {
   int16_t minimum = content > height ? height - content : 0;
   return scroll_layer_get_content_offset(scroll).y <= minimum + 1;
 }
-static void draw_action(Layer *layer, GContext *ctx) {
-  GRect bounds = layer_get_bounds(layer);
-  GPoint center = GPoint(bounds.size.w / 2, bounds.size.h / 2);
+static void draw_round_button(GContext *ctx, GPoint center) {
   graphics_context_set_fill_color(ctx, GColorWhite);
   graphics_fill_circle(ctx, center, 19);
   graphics_context_set_fill_color(ctx, GColorBlack);
   graphics_fill_circle(ctx, center, 17);
   graphics_context_set_fill_color(ctx, GColorWhite);
   graphics_context_set_stroke_color(ctx, GColorWhite);
+}
+static void draw_mic_glyph(GContext *ctx, GPoint center) {
+  graphics_fill_rect(ctx, GRect(center.x - 3, center.y - 10, 6, 12), 3, GCornersAll);
+  graphics_draw_line(ctx, GPoint(center.x - 7, center.y - 4), GPoint(center.x - 7, center.y + 2));
+  graphics_draw_line(ctx, GPoint(center.x + 7, center.y - 4), GPoint(center.x + 7, center.y + 2));
+  graphics_draw_line(ctx, GPoint(center.x - 7, center.y + 2), GPoint(center.x, center.y + 7));
+  graphics_draw_line(ctx, GPoint(center.x + 7, center.y + 2), GPoint(center.x, center.y + 7));
+  graphics_draw_line(ctx, GPoint(center.x, center.y + 7), GPoint(center.x, center.y + 12));
+  graphics_draw_line(ctx, GPoint(center.x - 4, center.y + 12), GPoint(center.x + 4, center.y + 12));
+}
+static void draw_action(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  GPoint center = GPoint(bounds.size.w / 2, bounds.size.h / 2);
+  draw_round_button(ctx, center);
   if (detail_at_bottom()) {
-    graphics_fill_rect(ctx, GRect(center.x - 3, center.y - 10, 6, 12), 3, GCornersAll);
-    graphics_draw_line(ctx, GPoint(center.x - 7, center.y - 4), GPoint(center.x - 7, center.y + 2));
-    graphics_draw_line(ctx, GPoint(center.x + 7, center.y - 4), GPoint(center.x + 7, center.y + 2));
-    graphics_draw_line(ctx, GPoint(center.x - 7, center.y + 2), GPoint(center.x, center.y + 7));
-    graphics_draw_line(ctx, GPoint(center.x + 7, center.y + 2), GPoint(center.x, center.y + 7));
-    graphics_draw_line(ctx, GPoint(center.x, center.y + 7), GPoint(center.x, center.y + 12));
-    graphics_draw_line(ctx, GPoint(center.x - 4, center.y + 12), GPoint(center.x + 4, center.y + 12));
+    draw_mic_glyph(ctx, center);
   } else {
     graphics_draw_line(ctx, GPoint(center.x, center.y - 10), GPoint(center.x, center.y + 7));
     graphics_draw_line(ctx, GPoint(center.x - 7, center.y), GPoint(center.x, center.y + 7));
@@ -273,21 +291,25 @@ static void detail_unload(Window *window) {
   layer_destroy(chat_layer); chat_layer = NULL;
   scroll_layer_destroy(scroll); scroll = NULL;
 }
-static void choose(int index, void *context) {
-  if (!ids[index][0]) return;
-  if (!strcmp(ids[index], "__next")) { send_request("next", NULL, NULL); return; }
-  if (!strcmp(ids[index], "__previous")) { send_request("previous", NULL, NULL); return; }
+static void open_thread(const char *id) {
+  if (!id || !id[0]) return;
   stop_momentum();
   expanded_item[0] = 0;
-  selected = index;
-  snprintf(active_thread, sizeof(active_thread), "%s", ids[index]);
+  snprintf(active_thread, sizeof(active_thread), "%s", id);
   chat_count = 1;
   snprintf(chat[0].type, sizeof(chat[0].type), "reasoning");
   snprintf(chat[0].text, sizeof(chat[0].text), "Loading...");
   snprintf(chat[0].status, sizeof(chat[0].status), "running");
   chat[0].item[0] = chat[0].summary[0] = 0;
   window_stack_push(detail_window, true);
-  send_request("read", ids[index], NULL);
+  send_request("read", id, NULL);
+}
+static void choose(int index, void *context) {
+  if (!ids[index][0]) return;
+  if (!strcmp(ids[index], "__next")) { send_request("next", NULL, NULL); return; }
+  if (!strcmp(ids[index], "__previous")) { send_request("previous", NULL, NULL); return; }
+  selected = index;
+  open_thread(ids[index]);
 }
 static int16_t decode_mulaw(uint8_t value) {
   value = ~value;
@@ -324,6 +346,59 @@ static void add_section(const char *title) {
   section_start[section_count] = count;
   section_size[section_count] = 0;
   thread_section = section_count++;
+}
+static void wizard_present(void) {
+  if (wizard_menu) menu_layer_reload_data(wizard_menu);
+  else window_stack_push(wizard_window, true);
+}
+static void wizard_pick(int row) {
+  if (row < 0 || row >= wizard_count || !wizard_step[0] || !wizard_rows[row][0]) return;
+  DictionaryIterator *out;
+  if (app_message_outbox_begin(&out) != APP_MSG_OK) return;
+  dict_write_cstring(out, MESSAGE_KEY_action, "wizard_pick");
+  dict_write_cstring(out, MESSAGE_KEY_thread, wizard_step);
+  dict_write_cstring(out, MESSAGE_KEY_item, wizard_rows[row]);
+  app_message_outbox_send();
+}
+static uint16_t wizard_sections(MenuLayer *layer, void *context) { return 1; }
+static uint16_t wizard_row_count(MenuLayer *layer, uint16_t section, void *context) { return wizard_count; }
+static int16_t wizard_row_height(MenuLayer *layer, MenuIndex *index, void *context) { return 44; }
+static int16_t wizard_header_height(MenuLayer *layer, uint16_t section, void *context) { return SECTION_HEIGHT; }
+static void wizard_draw(GContext *ctx, const Layer *layer, MenuIndex *index, void *context) {
+  if (index->row >= wizard_count) return;
+  int width = layer_get_bounds(layer).size.w, x = 6;
+  bool highlighted = menu_layer_is_index_selected(wizard_menu, index);
+  graphics_context_set_text_color(ctx, highlighted ? GColorWhite : GColorBlack);
+  int provider = provider_index(wizard_harnesses[index->row]);
+  GBitmap *logo = provider < 0 ? NULL : provider_logos[provider][highlighted ? 1 : 0];
+  if (logo) {
+    graphics_context_set_compositing_mode(ctx, GCompOpSet);
+    graphics_draw_bitmap_in_rect(ctx, logo, GRect(4, 15, 14, 14));
+    graphics_context_set_compositing_mode(ctx, GCompOpAssign);
+    x = 23;
+  }
+  graphics_draw_text(ctx, wizard_labels[index->row], fonts_get_system_font(FONT_KEY_GOTHIC_18), GRect(x, 11, width - x - 8, 24), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+}
+static void wizard_header(GContext *ctx, const Layer *layer, uint16_t section, void *context) {
+  menu_cell_basic_header_draw(ctx, layer, wizard_title[0] ? wizard_title : "New thread");
+}
+static void wizard_select(MenuLayer *layer, MenuIndex *index, void *context) { wizard_pick(index->row); }
+static void wizard_tap(int16_t y) {
+  if (!wizard_menu) return;
+  int content_y = y - scroll_layer_get_content_offset(menu_layer_get_scroll_layer(wizard_menu)).y - SECTION_HEIGHT;
+  if (content_y < 0 || content_y / 44 >= wizard_count) return;
+  wizard_pick(content_y / 44);
+}
+static void wizard_load(Window *window) {
+  Layer *root = window_get_root_layer(window);
+  wizard_menu = menu_layer_create(layer_get_bounds(root));
+  menu_layer_set_callbacks(wizard_menu, NULL, (MenuLayerCallbacks){ .get_num_sections = wizard_sections, .get_num_rows = wizard_row_count, .get_cell_height = wizard_row_height, .get_header_height = wizard_header_height, .draw_row = wizard_draw, .draw_header = wizard_header, .select_click = wizard_select });
+  menu_layer_set_click_config_onto_window(wizard_menu, window);
+  layer_add_child(root, menu_layer_get_layer(wizard_menu));
+}
+static void wizard_unload(Window *window) {
+  send_request("close_wizard", NULL, NULL);
+  if (wizard_menu) { menu_layer_destroy(wizard_menu); wizard_menu = NULL; }
 }
 static void receive(DictionaryIterator *in, void *context) {
   Tuple *action = dict_find(in, MESSAGE_KEY_action);
@@ -409,6 +484,35 @@ static void receive(DictionaryIterator *in, void *context) {
     }
   } else if (!strcmp(action->value->cstring, "chat_show")) {
     update_chat();
+  } else if (!strcmp(action->value->cstring, "wizard_step")) {
+    Tuple *step = dict_find(in, MESSAGE_KEY_thread), *title = dict_find(in, MESSAGE_KEY_title);
+    wizard_count = 0;
+    snprintf(wizard_step, sizeof(wizard_step), "%s", step ? step->value->cstring : "");
+    snprintf(wizard_title, sizeof(wizard_title), "%s", title ? title->value->cstring : "");
+    wizard_present();
+  } else if (!strcmp(action->value->cstring, "wizard_row")) {
+    Tuple *title = dict_find(in, MESSAGE_KEY_title), *item = dict_find(in, MESSAGE_KEY_item), *harness = dict_find(in, MESSAGE_KEY_harness);
+    if (wizard_count < MAX_WIZARD) {
+      snprintf(wizard_labels[wizard_count], sizeof(wizard_labels[wizard_count]), "%s", title ? title->value->cstring : "");
+      snprintf(wizard_rows[wizard_count], sizeof(wizard_rows[wizard_count]), "%s", item ? item->value->cstring : "");
+      snprintf(wizard_harnesses[wizard_count], sizeof(wizard_harnesses[wizard_count]), "%s", harness ? harness->value->cstring : "");
+      wizard_count++;
+    }
+  } else if (!strcmp(action->value->cstring, "wizard_show")) {
+    wizard_present();
+  } else if (!strcmp(action->value->cstring, "wizard_error")) {
+    Tuple *title = dict_find(in, MESSAGE_KEY_title);
+    snprintf(wizard_labels[0], sizeof(wizard_labels[0]), "%s", title ? title->value->cstring : "Something went wrong");
+    wizard_rows[0][0] = wizard_harnesses[0][0] = 0;
+    wizard_count = 1;
+    wizard_present();
+  } else if (!strcmp(action->value->cstring, "open_thread")) {
+    Tuple *id = dict_find(in, MESSAGE_KEY_thread);
+    if (id) {
+      if (wizard_menu) window_stack_remove(wizard_window, false);
+      if (window_stack_get_top_window() == detail_window) window_stack_remove(detail_window, false);
+      open_thread(id->value->cstring);
+    }
   }
 
 }
@@ -434,9 +538,7 @@ static void list_draw(GContext *ctx, const Layer *layer, MenuIndex *index, void 
   graphics_draw_rect(ctx, GRect(x, 30, 12, 8));
   graphics_draw_line(ctx, GPoint(x + 1, 28), GPoint(x + 6, 28));
   graphics_draw_text(ctx, directories[row], meta_font, GRect(x + 16, 24, width - x - 19, 19), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-  int provider = -1;
-  for (size_t i = 0; i < sizeof(provider_alias) / sizeof(provider_alias[0]); i++)
-    if (!strcmp(harnesses[row], provider_alias[i])) { provider = provider_alias_index[i]; break; }
+  int provider = provider_index(harnesses[row]);
   bool highlighted = menu_layer_is_index_selected(menu, index);
   GBitmap *logo = provider < 0 ? NULL : provider_logos[provider][highlighted ? 1 : 0];
   if (logo) {
@@ -486,6 +588,17 @@ static void detail_tap(int16_t x, int16_t y) {
     row_y += height + 5;
   }
 }
+static void draw_new_button(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  GPoint center = GPoint(bounds.size.w / 2, bounds.size.h / 2);
+  draw_round_button(ctx, center);
+  draw_mic_glyph(ctx, center);
+}
+static bool new_button_hit(int16_t x, int16_t y) {
+  GRect bounds = layer_get_bounds(window_get_root_layer(list_window));
+  int16_t dx = x - (bounds.size.w - 30), dy = y - (bounds.size.h - 30);
+  return dx * dx + dy * dy <= 529;
+}
 static void list_tap(ScrollLayer *target, int16_t y) {
   int content_y = y - scroll_layer_get_content_offset(target).y;
   for (int section = 0; section < section_count; section++) {
@@ -498,7 +611,9 @@ static void list_tap(ScrollLayer *target, int16_t y) {
 }
 static void on_touch(const TouchEvent *event, void *context) {
   Window *top = window_stack_get_top_window();
-  ScrollLayer *target = top == detail_window ? scroll : menu ? menu_layer_get_scroll_layer(menu) : NULL;
+  ScrollLayer *target = top == detail_window ? scroll
+    : top == wizard_window && wizard_menu ? menu_layer_get_scroll_layer(wizard_menu)
+    : menu ? menu_layer_get_scroll_layer(menu) : NULL;
   if (!target) return;
   if (event->type == TouchEvent_Touchdown) {
     light_enable_interaction(); touching = true; touch_x = event->x; touch_y = event->y;
@@ -528,6 +643,8 @@ static void on_touch(const TouchEvent *event, void *context) {
       start_momentum(target, dy < 0 ? -velocity : velocity);
     } else if (abs(dx) < 12 && abs(dy) < 12) {
       if (top == detail_window) detail_tap(event->x, event->y);
+      else if (top == wizard_window) wizard_tap(event->y);
+      else if (new_button_hit(event->x, event->y)) send_request("new", NULL, NULL);
       else list_tap(target, event->y);
     }
   }
@@ -538,6 +655,10 @@ static void list_load(Window *window) {
   menu_layer_set_callbacks(menu, NULL, (MenuLayerCallbacks){ .get_num_sections = list_sections, .get_num_rows = list_rows, .get_cell_height = list_height, .get_header_height = list_header_height, .draw_row = list_draw, .draw_header = list_header, .select_click = list_select });
   menu_layer_set_click_config_onto_window(menu, window);
   layer_add_child(root, menu_layer_get_layer(menu));
+  GRect bounds = layer_get_bounds(root);
+  new_button_layer = layer_create(GRect(bounds.size.w - 50, bounds.size.h - 50, 40, 40));
+  layer_set_update_proc(new_button_layer, draw_new_button);
+  layer_add_child(root, new_button_layer);
   for (int i = 0; i < PROVIDER_COUNT; i++)
     for (int variant = 0; variant < 2; variant++)
       provider_logos[i][variant] = gbitmap_create_with_resource(provider_logo_ids[i][variant]);
@@ -551,13 +672,16 @@ static void list_unload(Window *window) {
       provider_logos[i][variant] = NULL;
     }
   if (menu) { menu_layer_destroy(menu); menu = NULL; }
+  if (new_button_layer) { layer_destroy(new_button_layer); new_button_layer = NULL; }
 }
 int main(void) {
-  list_window = window_create(); detail_window = window_create();
+  list_window = window_create(); detail_window = window_create(); wizard_window = window_create();
   window_set_touch_bridge_disabled(list_window, true);
   window_set_touch_bridge_disabled(detail_window, true);
+  window_set_touch_bridge_disabled(wizard_window, true);
   window_set_window_handlers(list_window, (WindowHandlers){ .load = list_load, .unload = list_unload });
   window_set_window_handlers(detail_window, (WindowHandlers){ .load = detail_load, .unload = detail_unload });
+  window_set_window_handlers(wizard_window, (WindowHandlers){ .load = wizard_load, .unload = wizard_unload });
   dictation = dictation_session_create(512, dictation_result, NULL);
   speaker_set_finish_callback(audio_finished, NULL);
   touch_service_subscribe(on_touch, NULL);
@@ -569,5 +693,5 @@ int main(void) {
   speaker_set_finish_callback(NULL, NULL);
   free(audio_data);
   if (dictation) dictation_session_destroy(dictation);
-  window_destroy(detail_window); window_destroy(list_window);
+  window_destroy(detail_window); window_destroy(wizard_window); window_destroy(list_window);
 }

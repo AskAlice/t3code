@@ -32,6 +32,7 @@ async function setup() {
     holdSpeech: true,
     readError: false,
     sendError: false,
+    threadStatus: "",
     pcm: new Uint8Array([1, 2]).buffer as ArrayBuffer,
   };
 
@@ -117,7 +118,9 @@ async function setup() {
         return result(
           request.params.arguments.limit === 1
             ? { thread: { itemCount: script.itemCount }, items: [] }
-            : { items: script.items },
+            : script.threadStatus
+              ? { items: script.items, thread: { status: script.threadStatus } }
+              : { items: script.items },
         );
       case "t3_thread_send":
         if (script.sendError) {
@@ -399,6 +402,29 @@ test("caps chat item and summary fields at 150 bytes and messages at 900 bytes",
     expect(Buffer.byteLength(assistant.message, "utf8")).toBeGreaterThan(800);
     expect(assistant.message.endsWith("\x01")).toBe(true);
     expect(Buffer.byteLength(chats.at(-1).summary, "utf8")).toBeGreaterThan(0);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("drops empty assistant placeholders and empty work groups so Thinking shows", async () => {
+  const harness = await setup();
+  try {
+    await import("../src/pkjs/index.js?case=blank");
+    harness.ready();
+    harness.drain();
+    harness.script.threadStatus = "running";
+    harness.script.items = [
+      { itemId: "w1", type: "reasoning", status: "completed", title: "", text: "" },
+      { itemId: "u1", type: "user_message", status: "completed", text: "hello" },
+      { itemId: "a1", type: "assistant_message", status: "running", text: "" },
+    ];
+    harness.open("1");
+    harness.drain();
+
+    const chats = harness.attempts.filter((message) => message.action === "chat_item");
+    expect(chats.map((message) => message.title)).toEqual(["user_message", "reasoning"]);
+    expect(chats.at(-1)?.message).toBe("Thinking");
   } finally {
     harness.restore();
   }

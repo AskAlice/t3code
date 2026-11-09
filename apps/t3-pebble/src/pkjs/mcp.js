@@ -80,7 +80,13 @@ function rpc(method, params, callback) {
         return callback(parseError);
       }
       if (response.error || (response.result && response.result.isError))
-        return callback(new Error("T3 request failed"));
+        return callback(
+          new Error(
+            (response.error && response.error.message) ||
+              (response.result && response.result.isError && "T3 request failed") ||
+              "T3 request failed"
+          )
+        );
       session = request.getResponseHeader("mcp-session-id") || session;
       callback(null, (response.result && response.result.structuredContent) || response.result);
     }
