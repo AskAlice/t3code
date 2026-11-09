@@ -2,10 +2,12 @@ var xhr = require("./xhr.js");
 var crypto = require("./crypto.js");
 var REDIRECT = "http://127.0.0.1/callback";
 
-// Accepts the full pairing URL from T3 Code settings, including a nested t3code://pair link.
+// Accepts the pairing URL from T3 Code settings, including a nested t3code://pair link. The scheme may
+// be missing when the URL is copied from a terminal; T3's daemon serves plain HTTP unless TLS is set up.
 exports.parse = function (input) {
   var value = String(input || "").trim();
-  if (!value || !/^[a-z][a-z\d+.-]*:\/\//i.test(value)) return null;
+  if (!value) return null;
+  if (!/^[a-z][a-z\d+.-]*:\/\//i.test(value)) value = "http://" + value.replace(/^\/+/, "");
   try {
     var url = new URL(value);
     if (/^t3code(?:-[a-z]+)?:$/.test(url.protocol) && url.hostname === "pair") {

@@ -40,4 +40,9 @@ test("derives the daemon origin from the pairing URL", () => {
   ).toEqual({ origin: "http://127.0.0.1:1234", code: "abc" });
   expect(pairing.parse("https://mac.example/#token=")).toBeNull();
   expect(pairing.parse("not a url")).toBeNull();
+  // Copied from a terminal, the scheme may be missing; the daemon serves plain HTTP.
+  expect(pairing.parse("mac.example:3773/pair#token=abc")).toEqual({
+    origin: "http://mac.example:3773",
+    code: "abc",
+  });
 });
